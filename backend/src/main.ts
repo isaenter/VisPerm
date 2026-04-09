@@ -32,7 +32,7 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api-docs', app, document);
 
-  const port = process.env.PORT || 3000;
+  const port = process.env.PORT || 3001;
   await app.listen(port);
   console.log(`🚀 VisPerm 后端服务已启动：http://localhost:${port}`);
   console.log(`📚 API 文档：http://localhost:${port}/api-docs`);
