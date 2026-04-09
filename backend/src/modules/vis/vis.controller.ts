@@ -20,6 +20,7 @@ import {
 import { VisService } from './vis.service';
 import { CreateNodeDto, UpdateNodeDto } from './dto/node.dto';
 import { CreateEdgeDto, UpdateEdgeDto } from './dto/edge.dto';
+import { SimulationRunDto } from './dto/simulation.dto';
 import { TenantId } from '../../common/tenant/tenant.context';
 
 /**
@@ -143,5 +144,22 @@ export class VisController {
   @ApiResponse({ status: 200, description: '验证结果' })
   async validateGraph(@Body('nodes') nodes: any[], @Body('edges') edges: any[]) {
     return this.visService.validateTopology(nodes, edges);
+  }
+
+  // ==================== 模拟运行 API ====================
+
+  @Post('simulation/run')
+  @ApiOperation({
+    summary: '模拟运行权限计算（Sandbox）',
+    description: '在不修改数据库的情况下计算权限。支持传入角色 ID 或用户 ID 集合，返回模拟计算出的最终权限结构。默认 Dry Run 模式。',
+  })
+  @ApiBody({ type: SimulationRunDto })
+  @ApiResponse({ status: 200, description: '模拟计算完成，返回权限结构' })
+  @ApiResponse({ status: 400, description: '请求参数验证失败' })
+  async runSimulation(
+    @Body() dto: SimulationRunDto,
+    @TenantId() tenantId: string,
+  ) {
+    return this.visService.runSimulation(dto, tenantId);
   }
 }

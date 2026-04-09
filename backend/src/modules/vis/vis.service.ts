@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateNodeDto, UpdateNodeDto } from './dto/node.dto';
 import { CreateEdgeDto, UpdateEdgeDto } from './dto/edge.dto';
 import { CreateTopologyDto, UpdateTopologyDto } from './dto/topology.dto';
+import { SimulationRunDto } from './dto/simulation.dto';
 
 /**
  * 可视化拓扑服务
@@ -366,11 +367,17 @@ export class VisService {
   /**
    * 计算指定角色的权限
    * 通过图遍历算法从角色节点反向遍历至资源节点
+   * 
+   * 区分不同 EdgeType 的计算逻辑：
+   * - INHERITANCE (继承): 权限并集 (UNION) - 取所有路径的资源合集
+   * - NARROWING (收窄): 权限交集 (INTERSECTION) - 仅保留同时存在于收窄路径和继承路径的资源
+   * - EXTENSION (扩展): 权限追加 (APPEND) - 在已有权限基础上追加额外资源
+   * - DENY (排除): 权限剔除 (EXCLUSION) - 从最终结果中剔除被排除的资源
    */
-  async calculatePermissionsForRole(roleId: string, tenantId: string) {
+  async calculatePermissionsForRole(roleId: string, tenantId: string, env?: string) {
     // 1. 找到角色节点
     const roleNode = await this.prisma.visNode.findFirst({
-      where: { code: roleId, tenantId, type: 'ROLE' },
+      where: { code: roleId, tenantId, type: 'ROLE', ...(env ? { env } : {}) },
     });
 
     if (!roleNode) {
@@ -378,14 +385,47 @@ export class VisService {
         roleId,
         resources: [],
         filters: [],
+        deniedResources: [],
         message: '角色节点不存在',
       };
     }
 
-    // 2. DFS 反向遍历所有连线和节点
+    // 2. 执行增强版 DFS 遍历，按 EdgeType 分类收集资源
+    const result = await this.dfsCalculatePermissions(roleNode.id, tenantId);
+
+    // 3. 根据 EdgeType 合并权限
+    const mergedPermissions = this.mergePermissionsByEdgeType(result);
+
+    return {
+      roleId,
+      resources: mergedPermissions.grantedResources,
+      deniedResources: mergedPermissions.deniedResources,
+      filters: mergedPermissions.filters,
+      paths: result.paths,
+      message: '权限计算完成',
+    };
+  }
+
+  /**
+   * 增强版 DFS 遍历：按 EdgeType 分类收集资源和过滤器
+   * 返回分类后的原始数据，供后续合并使用
+   */
+  private async dfsCalculatePermissions(startNodeId: string, tenantId: string) {
     const visited = new Set<string>();
-    const resources = new Set<string>();
-    const filters: { expr: string; priority: 'extension' | 'inheritance' | 'narrowing' }[] = [];
+    // 按 EdgeType 分类收集资源
+    const resourcesByType = {
+      INHERITANCE: new Set<string>(),
+      NARROWING: new Set<string>(),
+      EXTENSION: new Set<string>(),
+      DENY: new Set<string>(),
+    };
+    // 按 EdgeType 分类收集过滤器
+    const filtersByType = {
+      INHERITANCE: [] as { expr: string; nodeId: string }[],
+      NARROWING: [] as { expr: string; nodeId: string }[],
+      EXTENSION: [] as { expr: string; nodeId: string }[],
+      DENY: [] as { expr: string; nodeId: string }[],
+    };
     const paths: { nodeId: string; type: string; edgeType?: string }[] = [];
 
     const dfs = async (nodeId: string, incomingEdgeType?: string) => {
@@ -403,21 +443,23 @@ export class VisService {
 
       if (!node) return;
 
+      // 记录当前节点的有效 EdgeType（若为根节点则默认为 INHERITANCE）
+      const effectiveEdgeType = (incomingEdgeType as keyof typeof resourcesByType) || 'INHERITANCE';
       paths.push({ nodeId: node.id, type: node.type, edgeType: incomingEdgeType });
 
-      // 收集资源
+      // 收集资源 - 按到达该资源的边的类型分类
       if (node.type === 'RESOURCE') {
-        resources.add(node.code || node.name);
+        const resourceCode = node.code || node.name;
+        resourcesByType[effectiveEdgeType].add(resourceCode);
       }
 
-      // 收集过滤器
+      // 收集过滤器 - 按边的类型分类
       if (node.type === 'FILTER' && node.config) {
         const config = node.config as any;
         if (config.expression) {
-          filters.push({
+          filtersByType[effectiveEdgeType].push({
             expr: config.expression,
-            priority: incomingEdgeType === 'EXTENSION' ? 'extension' :
-                      incomingEdgeType === 'NARROWING' ? 'narrowing' : 'inheritance',
+            nodeId: node.id,
           });
         }
       }
@@ -428,22 +470,114 @@ export class VisService {
       }
     };
 
-    await dfs(roleNode.id);
-
-    // 3. 合并过滤器
-    const filterExpression = this.mergeFilters(filters);
+    await dfs(startNodeId);
 
     return {
-      roleId,
-      resources: Array.from(resources),
-      filters: filterExpression ? [filterExpression] : [],
+      resourcesByType,
+      filtersByType,
       paths,
-      message: '权限计算完成',
     };
   }
 
   /**
-   * 合并过滤器表达式
+   * 按 EdgeType 合并权限
+   * 
+   * 合并策略：
+   * 1. 以 INHERITANCE 资源为基础集合
+   * 2. 若存在 NARROWING 资源，则取交集（收窄权限范围）
+   * 3. 追加 EXTENSION 资源（扩展权限）
+   * 4. 剔除 DENY 资源（排除权限）
+   */
+  private mergePermissionsByEdgeType(data: {
+    resourcesByType: Record<string, Set<string>>;
+    filtersByType: Record<string, { expr: string; nodeId: string }[]>;
+    paths: { nodeId: string; type: string; edgeType?: string }[];
+  }) {
+    const { INHERITANCE, NARROWING, EXTENSION, DENY } = data.resourcesByType;
+
+    // 步骤1: 以继承(INHERITANCE)资源为基础
+    let grantedResources = new Set<string>(INHERITANCE);
+
+    // 步骤2: 如果存在收窄(NARROWING)资源，取交集
+    // 收窄逻辑：仅保留同时存在于继承集合和收窄集合中的资源
+    if (NARROWING.size > 0) {
+      if (grantedResources.size > 0) {
+        // 有继承资源，取交集
+        grantedResources = new Set(
+          [...grantedResources].filter(r => NARROWING.has(r))
+        );
+      } else {
+        // 无继承资源时，收窄资源直接作为基础
+        grantedResources = new Set(NARROWING);
+      }
+    }
+
+    // 步骤3: 追加扩展(EXTENSION)资源
+    // 扩展逻辑：在已有权限基础上追加额外资源
+    for (const resource of EXTENSION) {
+      grantedResources.add(resource);
+    }
+
+    // 步骤4: 剔除排除(DENY)资源
+    // 排除逻辑：从最终结果中移除被排除的资源
+    const deniedResources = new Set<string>(DENY);
+    for (const resource of DENY) {
+      grantedResources.delete(resource);
+    }
+
+    // 合并所有过滤器表达式
+    const allFilters = [
+      ...data.filtersByType.INHERITANCE,
+      ...data.filtersByType.NARROWING,
+      ...data.filtersByType.EXTENSION,
+    ];
+    const filterExpression = this.mergeFiltersV2(allFilters, data.filtersByType);
+
+    return {
+      grantedResources: Array.from(grantedResources),
+      deniedResources: Array.from(deniedResources),
+      filters: filterExpression ? [filterExpression] : [],
+    };
+  }
+
+  /**
+   * 合并过滤器表达式（增强版，支持按优先级排序）
+   * 优先级：NARROWING(AND) > INHERITANCE(OR) > EXTENSION(OR)
+   */
+  private mergeFiltersV2(
+    allFilters: { expr: string; nodeId: string }[],
+    filtersByType: Record<string, { expr: string; nodeId: string }[]>
+  ): string {
+    if (allFilters.length === 0) return '';
+
+    const byPriority = {
+      narrowing: filtersByType.NARROWING.map(f => f.expr),
+      inheritance: filtersByType.INHERITANCE.map(f => f.expr),
+      extension: filtersByType.EXTENSION.map(f => f.expr),
+    };
+
+    const exprs: string[] = [];
+
+    // 收窄过滤器优先级最高，使用 AND 连接（进一步限制范围）
+    if (byPriority.narrowing.length > 0) {
+      exprs.push(`(${byPriority.narrowing.join(' AND ')})`);
+    }
+
+    // 继承过滤器，使用 OR 连接
+    if (byPriority.inheritance.length > 0) {
+      exprs.push(`(${byPriority.inheritance.join(' OR ')})`);
+    }
+
+    // 扩展过滤器，使用 OR 连接
+    if (byPriority.extension.length > 0) {
+      exprs.push(`(${byPriority.extension.join(' OR ')})`);
+    }
+
+    return exprs.join(' AND ');
+  }
+
+  /**
+   * 合并过滤器表达式（保留旧版兼容）
    */
   private mergeFilters(filters: { expr: string; priority: string }[]): string {
     if (filters.length === 0) return '';
@@ -466,5 +600,133 @@ export class VisService {
     }
 
     return exprs.join(' OR ');
+  }
+
+  // ==================== 模拟运行 API ====================
+
+  /**
+   * 模拟运行：在不修改数据库的情况下计算权限
+   * 支持传入多个角色 ID 或用户 ID，返回模拟计算出的最终权限结构
+   * 
+   * @param dto 模拟运行参数
+   * @param tenantId 租户 ID（从请求头获取）
+   * @returns 模拟权限结果
+   */
+  async runSimulation(dto: SimulationRunDto, tenantId: string) {
+    const { roleIds = [], userIds = [], dryRun = true, env } = dto;
+    const targetEnv = env || 'prod';
+
+    // 结果汇总
+    const results: {
+      sourceType: 'role' | 'user';
+      sourceId: string;
+      grantedResources: string[];
+      deniedResources: string[];
+      filters: string[];
+      computedAt: string;
+    }[] = [];
+
+    const errors: { sourceType: string; sourceId: string; error: string }[] = [];
+
+    // 1. 处理角色 ID 集合
+    for (const roleId of roleIds) {
+      try {
+        const permResult = await this.calculatePermissionsForRole(roleId, tenantId, targetEnv);
+        results.push({
+          sourceType: 'role',
+          sourceId: roleId,
+          grantedResources: permResult.resources || [],
+          deniedResources: permResult.deniedResources || [],
+          filters: permResult.filters || [],
+          computedAt: new Date().toISOString(),
+        });
+      } catch (e) {
+        errors.push({
+          sourceType: 'role',
+          sourceId: roleId,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+
+    // 2. 处理用户 ID 集合（需要先查询用户关联的角色）
+    for (const userId of userIds) {
+      try {
+        // 查询用户关联的所有角色
+        const userRoles = await this.prisma.sysUserRole.findMany({
+          where: { userId, tenantId },
+          include: { role: true },
+        });
+
+        if (userRoles.length === 0) {
+          errors.push({
+            sourceType: 'user',
+            sourceId: userId,
+            error: '用户未关联任何角色',
+          });
+          continue;
+        }
+
+        // 汇总用户所有角色的权限（多个角色的权限取并集）
+        const allGrantedResources = new Set<string>();
+        const allDeniedResources = new Set<string>();
+        const allFilters: string[] = [];
+        const roleDetails: { roleId: string; granted: string[]; denied: string[] }[] = [];
+
+        for (const userRole of userRoles) {
+          const roleCode = userRole.role.code;
+          const permResult = await this.calculatePermissionsForRole(roleCode, tenantId, targetEnv);
+
+          // 用户多角色权限合并：资源取并集
+          for (const r of permResult.resources || []) {
+            allGrantedResources.add(r);
+          }
+          // 排除资源取并集（任一角色排除则排除）
+          for (const r of permResult.deniedResources || []) {
+            allDeniedResources.add(r);
+          }
+          for (const f of permResult.filters || []) {
+            allFilters.push(f);
+          }
+
+          roleDetails.push({
+            roleId: roleCode,
+            granted: permResult.resources || [],
+            denied: permResult.deniedResources || [],
+          });
+        }
+
+        // 从授权资源中剔除排除资源
+        for (const r of allDeniedResources) {
+          allGrantedResources.delete(r);
+        }
+
+        results.push({
+          sourceType: 'user',
+          sourceId: userId,
+          grantedResources: Array.from(allGrantedResources),
+          deniedResources: Array.from(allDeniedResources),
+          filters: allFilters,
+          computedAt: new Date().toISOString(),
+        });
+      } catch (e) {
+        errors.push({
+          sourceType: 'user',
+          sourceId: userId,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+
+    return {
+      dryRun,
+      tenantId,
+      env: targetEnv,
+      totalGranted: results.reduce((sum, r) => sum + r.grantedResources.length, 0),
+      totalDenied: results.reduce((sum, r) => sum + r.deniedResources.length, 0),
+      results,
+      errors,
+      computedAt: new Date().toISOString(),
+    };
   }
 }
