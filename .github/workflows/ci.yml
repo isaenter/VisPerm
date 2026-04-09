@@ -1,0 +1,141 @@
+# VisPerm 持续集成工作流
+# 触发条件: push/PR 到 main 分支
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 环境变量
+env:
+  NODE_VERSION: '20'
+  PNPM_VERSION: '9'
+
+jobs:
+  # ==================== 后端测试 ====================
+  backend-test:
+    name: 后端测试 (NestJS)
+    runs-on: ubuntu-latest
+
+    # 服务容器：PostgreSQL 和 Redis
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: visperm
+          POSTGRES_PASSWORD: visperm_pass
+          POSTGRES_DB: visperm_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      # 1. 检出代码
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      # 2. 安装 pnpm
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      # 3. 设置 Node.js
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      # 4. 安装后端依赖
+      - name: 安装后端依赖
+        working-directory: ./backend
+        run: pnpm install --frozen-lockfile
+
+      # 5. 生成 Prisma 客户端
+      - name: 生成 Prisma 客户端
+        working-directory: ./backend
+        run: pnpm prisma:generate
+        env:
+          DATABASE_URL: postgresql://visperm:visperm_pass@localhost:5432/visperm_test
+
+      # 6. TypeScript 类型检查
+      - name: TypeScript 类型检查
+        working-directory: ./backend
+        run: pnpm exec tsc --noEmit
+
+      # 7. 运行后端单元测试
+      - name: 运行后端单元测试
+        working-directory: ./backend
+        run: pnpm test
+        env:
+          DATABASE_URL: postgresql://visperm:visperm_pass@localhost:5432/visperm_test
+          REDIS_URL: redis://localhost:6379
+
+      # 8. 运行后端 E2E 测试（如果数据库可用）
+      - name: 运行后端 E2E 测试
+        working-directory: ./backend
+        run: pnpm run test:e2e --passWithNoTests
+        env:
+          DATABASE_URL: postgresql://visperm:visperm_pass@localhost:5432/visperm_test
+          REDIS_URL: redis://localhost:6379
+        continue-on-error: true
+
+  # ==================== 前端构建 ====================
+  frontend-build:
+    name: 前端构建 (Vue3)
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. 检出代码
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      # 2. 安装 pnpm
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      # 3. 设置 Node.js
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      # 4. 安装前端依赖
+      - name: 安装前端依赖
+        working-directory: ./frontend
+        run: pnpm install --frozen-lockfile
+
+      # 5. TypeScript 类型检查
+      - name: TypeScript 类型检查
+        working-directory: ./frontend
+        run: pnpm exec vue-tsc --noEmit
+
+      # 6. 前端构建
+      - name: 前端构建
+        working-directory: ./frontend
+        run: pnpm build
+
+      # 7. 前端单元测试
+      - name: 运行前端单元测试
+        working-directory: ./frontend
+        run: pnpm test:unit

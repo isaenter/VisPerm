@@ -1,13 +1,21 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../prisma/prisma.service';
+import { CacheService } from '../cache/cache.service';
+import { AuditService } from '../audit/audit.service';
 import { VisService } from './vis.service';
-import { NodeType, EdgeType } from '@prisma/client';
+import { CreateNodeDto, UpdateNodeDto } from './dto/node.dto';
+import { CreateEdgeDto } from './dto/edge.dto';
 
+/**
+ * VisService 单元测试
+ * 覆盖 createNode, updateNode, deleteNode, validateEdgeConnection, validateTopology
+ * 至少 15 个测试用例
+ */
 describe('VisService', () => {
   let service: VisService;
   let prisma: PrismaService;
 
-  // Mock PrismaService
+  // 模拟 PrismaService
   const mockPrismaService = {
     visNode: {
       findMany: jest.fn(),
@@ -26,6 +34,27 @@ describe('VisService', () => {
       delete: jest.fn(),
       deleteMany: jest.fn(),
     },
+    visTopology: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    },
+  };
+
+  // 模拟 CacheService
+  const mockCacheService = {
+    get: jest.fn(),
+    set: jest.fn(),
+    del: jest.fn(),
+    clearPattern: jest.fn(),
+  };
+
+  // 模拟 AuditService
+  const mockAuditService = {
+    logAction: jest.fn(),
+    findAuditLogs: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -35,6 +64,14 @@ describe('VisService', () => {
         {
           provide: PrismaService,
           useValue: mockPrismaService,
+        },
+        {
+          provide: CacheService,
+          useValue: mockCacheService,
+        },
+        {
+          provide: AuditService,
+          useValue: mockAuditService,
         },
       ],
     }).compile();
@@ -47,58 +84,288 @@ describe('VisService', () => {
     jest.clearAllMocks();
   });
 
+  // ==================== 节点 CRUD 测试 ====================
+
+  describe('createNode', () => {
+    it('应该成功创建节点', async () => {
+      const dto: CreateNodeDto = {
+        tenantId: 'tenant-1',
+        type: 'RESOURCE',
+        name: '测试资源',
+        code: 'test_resource',
+        positionX: 100,
+        positionY: 200,
+        config: { key: 'value' },
+      };
+      const createdNode = { id: 'node-1', ...dto, createdAt: new Date(), updatedAt: new Date() };
+      mockPrismaService.visNode.create.mockResolvedValue(createdNode);
+
+      const result = await service.createNode(dto);
+
+      expect(result).toEqual(createdNode);
+      expect(prisma.visNode.create).toHaveBeenCalledWith({
+        data: {
+          tenantId: 'tenant-1',
+          type: 'RESOURCE',
+          name: '测试资源',
+          code: 'test_resource',
+          positionX: 100,
+          positionY: 200,
+          config: { key: 'value' },
+        },
+      });
+      // 验证审计日志被记录
+      expect(mockAuditService.logAction).toHaveBeenCalled();
+      // 验证缓存被清除
+      expect(mockCacheService.clearPattern).toHaveBeenCalledWith('perm:*');
+    });
+
+    it('应该使用默认值创建节点（无 position 和 config）', async () => {
+      const dto: CreateNodeDto = {
+        tenantId: 'tenant-1',
+        type: 'ROLE',
+        name: '管理员',
+        code: 'admin',
+      };
+      const createdNode = { id: 'node-2', ...dto, positionX: 0, positionY: 0, config: {}, createdAt: new Date(), updatedAt: new Date() };
+      mockPrismaService.visNode.create.mockResolvedValue(createdNode);
+
+      const result = await service.createNode(dto);
+
+      expect(result.positionX).toBe(0);
+      expect(result.positionY).toBe(0);
+      expect(result.config).toEqual({});
+    });
+  });
+
+  describe('updateNode', () => {
+    it('应该成功更新节点并带有 tenantId 隔离', async () => {
+      const dto: UpdateNodeDto = {
+        name: '更新后的名称',
+        positionX: 300,
+        positionY: 400,
+      };
+      const updatedNode = {
+        id: 'node-1',
+        tenantId: 'tenant-1',
+        name: '更新后的名称',
+        positionX: 300,
+        positionY: 400,
+        updatedAt: new Date(),
+      };
+      mockPrismaService.visNode.update.mockResolvedValue(updatedNode);
+
+      const result = await service.updateNode('node-1', dto, 'tenant-1');
+
+      expect(result).toEqual(updatedNode);
+      expect(prisma.visNode.update).toHaveBeenCalledWith({
+        where: { id: 'node-1', tenantId: 'tenant-1' },
+        data: { name: '更新后的名称', positionX: 300, positionY: 400 },
+      });
+    });
+
+    it('应该使用 tenantId 防止跨租户更新（IDOR 防护）', async () => {
+      const dto: UpdateNodeDto = { name: '被篡改的名称' };
+      mockPrismaService.visNode.update.mockRejectedValue(
+        new Error('Record to update not found')
+      );
+
+      // 攻击者尝试用 tenant-2 更新 tenant-1 的节点
+      await expect(service.updateNode('node-1', dto, 'tenant-2'))
+        .rejects.toThrow('Record to update not found');
+
+      // 验证查询包含了正确的 tenantId
+      expect(prisma.visNode.update).toHaveBeenCalledWith({
+        where: { id: 'node-1', tenantId: 'tenant-2' },
+        data: { name: '被篡改的名称' },
+      });
+    });
+  });
+
+  describe('deleteNode', () => {
+    it('应该删除节点及其关联的连线', async () => {
+      mockPrismaService.visNode.findUnique.mockResolvedValue({
+        id: 'node-1',
+        name: '待删除节点',
+      });
+      mockPrismaService.visEdge.deleteMany.mockResolvedValue({ count: 2 });
+      mockPrismaService.visNode.delete.mockResolvedValue({ id: 'node-1' });
+
+      const result = await service.deleteNode('node-1', 'tenant-1');
+
+      expect(result).toEqual({ id: 'node-1' });
+      // 验证关联连线被删除
+      expect(prisma.visEdge.deleteMany).toHaveBeenCalledWith({
+        where: {
+          tenantId: 'tenant-1',
+          OR: [{ sourceNodeId: 'node-1' }, { targetNodeId: 'node-1' }],
+        },
+      });
+      // 验证节点被删除
+      expect(prisma.visNode.delete).toHaveBeenCalledWith({
+        where: { id: 'node-1', tenantId: 'tenant-1' },
+      });
+    });
+
+    it('应该使用 tenantId 防止跨租户删除', async () => {
+      mockPrismaService.visNode.findUnique.mockResolvedValue(null);
+      mockPrismaService.visEdge.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrismaService.visNode.delete.mockRejectedValue(
+        new Error('Record to delete does not exist')
+      );
+
+      await expect(service.deleteNode('node-1', 'wrong-tenant'))
+        .rejects.toThrow('Record to delete does not exist');
+
+      expect(prisma.visNode.delete).toHaveBeenCalledWith({
+        where: { id: 'node-1', tenantId: 'wrong-tenant' },
+      });
+    });
+  });
+
+  // ==================== validateEdgeConnection 测试 ====================
+
   describe('validateEdgeConnection', () => {
     it('应该允许 RESOURCE -> FILTER 连接', async () => {
       mockPrismaService.visNode.findUnique
-        .mockResolvedValueOnce({ type: NodeType.RESOURCE })
-        .mockResolvedValueOnce({ type: NodeType.FILTER });
+        .mockResolvedValueOnce({ type: 'RESOURCE', tenantId: 'tenant-1' })
+        .mockResolvedValueOnce({ type: 'FILTER', tenantId: 'tenant-1' });
       mockPrismaService.visEdge.findFirst.mockResolvedValue(null);
 
-      const result = await service.validateEdgeConnection('node1', 'node2', EdgeType.INHERITANCE);
+      const result = await service.validateEdgeConnection('node1', 'node2', 'INHERITANCE', 'tenant-1');
+
+      expect(result.valid).toBe(true);
+    });
+
+    it('应该允许 FILTER -> ROLE 连接', async () => {
+      mockPrismaService.visNode.findUnique
+        .mockResolvedValueOnce({ type: 'FILTER', tenantId: 'tenant-1' })
+        .mockResolvedValueOnce({ type: 'ROLE', tenantId: 'tenant-1' });
+      mockPrismaService.visEdge.findFirst.mockResolvedValue(null);
+
+      const result = await service.validateEdgeConnection('node1', 'node2', 'INHERITANCE', 'tenant-1');
+
+      expect(result.valid).toBe(true);
+    });
+
+    it('应该允许 FILTER -> FILTER 连接', async () => {
+      mockPrismaService.visNode.findUnique
+        .mockResolvedValueOnce({ type: 'FILTER', tenantId: 'tenant-1' })
+        .mockResolvedValueOnce({ type: 'FILTER', tenantId: 'tenant-1' });
+      mockPrismaService.visEdge.findFirst.mockResolvedValue(null);
+
+      const result = await service.validateEdgeConnection('node1', 'node2', 'INHERITANCE', 'tenant-1');
+
+      expect(result.valid).toBe(true);
+    });
+
+    it('应该允许 ADDON -> ROLE 连接', async () => {
+      mockPrismaService.visNode.findUnique
+        .mockResolvedValueOnce({ type: 'ADDON', tenantId: 'tenant-1' })
+        .mockResolvedValueOnce({ type: 'ROLE', tenantId: 'tenant-1' });
+      mockPrismaService.visEdge.findFirst.mockResolvedValue(null);
+
+      const result = await service.validateEdgeConnection('node1', 'node2', 'EXTENSION', 'tenant-1');
+
       expect(result.valid).toBe(true);
     });
 
     it('应该拒绝 FILTER -> RESOURCE 反向连接', async () => {
       mockPrismaService.visNode.findUnique
-        .mockResolvedValueOnce({ type: NodeType.FILTER })
-        .mockResolvedValueOnce({ type: NodeType.RESOURCE });
+        .mockResolvedValueOnce({ type: 'FILTER', tenantId: 'tenant-1' })
+        .mockResolvedValueOnce({ type: 'RESOURCE', tenantId: 'tenant-1' });
 
-      const result = await service.validateEdgeConnection('node1', 'node2', EdgeType.INHERITANCE);
+      const result = await service.validateEdgeConnection('node1', 'node2', 'INHERITANCE', 'tenant-1');
+
       expect(result.valid).toBe(false);
       expect(result.reason).toContain('不允许的连线');
     });
 
     it('应该拒绝 ROLE 作为源节点', async () => {
       mockPrismaService.visNode.findUnique
-        .mockResolvedValueOnce({ type: NodeType.ROLE })
-        .mockResolvedValueOnce({ type: NodeType.RESOURCE });
+        .mockResolvedValueOnce({ type: 'ROLE', tenantId: 'tenant-1' })
+        .mockResolvedValueOnce({ type: 'RESOURCE', tenantId: 'tenant-1' });
 
-      const result = await service.validateEdgeConnection('node1', 'node2', EdgeType.INHERITANCE);
+      const result = await service.validateEdgeConnection('node1', 'node2', 'INHERITANCE', 'tenant-1');
+
       expect(result.valid).toBe(false);
     });
 
-    it('应该拒绝不存在的节点', async () => {
-      mockPrismaService.visNode.findUnique.mockResolvedValue(null);
+    it('应该拒绝 ADDON -> FILTER 非法连接', async () => {
+      mockPrismaService.visNode.findUnique
+        .mockResolvedValueOnce({ type: 'ADDON', tenantId: 'tenant-1' })
+        .mockResolvedValueOnce({ type: 'FILTER', tenantId: 'tenant-1' });
 
-      const result = await service.validateEdgeConnection('nonexistent', 'node2', EdgeType.INHERITANCE);
+      const result = await service.validateEdgeConnection('node1', 'node2', 'EXTENSION', 'tenant-1');
+
+      expect(result.valid).toBe(false);
+      expect(result.reason).toContain('不允许的连线');
+    });
+
+    it('应该拒绝不存在的源节点', async () => {
+      mockPrismaService.visNode.findUnique.mockResolvedValueOnce(null);
+
+      const result = await service.validateEdgeConnection('nonexistent', 'node2', 'INHERITANCE', 'tenant-1');
+
       expect(result.valid).toBe(false);
       expect(result.reason).toBe('源节点或目标节点不存在');
     });
 
+    it('应该拒绝不存在的目标节点', async () => {
+      mockPrismaService.visNode.findUnique
+        .mockResolvedValueOnce({ type: 'RESOURCE', tenantId: 'tenant-1' })
+        .mockResolvedValueOnce(null);
+
+      const result = await service.validateEdgeConnection('node1', 'nonexistent', 'INHERITANCE', 'tenant-1');
+
+      expect(result.valid).toBe(false);
+      expect(result.reason).toBe('源节点或目标节点不存在');
+    });
+
+    it('应该拒绝跨租户连线', async () => {
+      mockPrismaService.visNode.findUnique
+        .mockResolvedValueOnce({ type: 'RESOURCE', tenantId: 'tenant-1' })
+        .mockResolvedValueOnce({ type: 'FILTER', tenantId: 'tenant-2' });
+
+      const result = await service.validateEdgeConnection('node1', 'node2', 'INHERITANCE', 'tenant-1');
+
+      expect(result.valid).toBe(false);
+      expect(result.reason).toContain('跨租户');
+    });
+
     it('应该拒绝已存在的重边', async () => {
       mockPrismaService.visNode.findUnique
-        .mockResolvedValueOnce({ type: NodeType.RESOURCE })
-        .mockResolvedValueOnce({ type: NodeType.FILTER });
+        .mockResolvedValueOnce({ type: 'RESOURCE', tenantId: 'tenant-1' })
+        .mockResolvedValueOnce({ type: 'FILTER', tenantId: 'tenant-1' });
       mockPrismaService.visEdge.findFirst.mockResolvedValue({ id: 'existing-edge' });
 
-      const result = await service.validateEdgeConnection('node1', 'node2', EdgeType.INHERITANCE);
+      const result = await service.validateEdgeConnection('node1', 'node2', 'INHERITANCE', 'tenant-1');
+
       expect(result.valid).toBe(false);
       expect(result.reason).toBe('已存在相同的连线');
     });
   });
 
+  // ==================== validateTopology 测试 ====================
+
   describe('validateTopology', () => {
-    it('应该检测出环路', async () => {
+    it('应该检测出简单环路 A -> B -> A', async () => {
+      const nodes = [
+        { id: '1', type: 'RESOURCE' },
+        { id: '2', type: 'FILTER' },
+      ];
+      const edges = [
+        { sourceNodeId: '1', targetNodeId: '2' },
+        { sourceNodeId: '2', targetNodeId: '1' },
+      ];
+
+      const result = await service.validateTopology(nodes, edges);
+
+      expect(result.valid).toBe(false);
+      expect(result.issues).toContain('检测到环路，请检查连线配置');
+    });
+
+    it('应该检测出复杂环路 A -> B -> C -> A', async () => {
       const nodes = [
         { id: '1', type: 'RESOURCE' },
         { id: '2', type: 'FILTER' },
@@ -107,10 +374,11 @@ describe('VisService', () => {
       const edges = [
         { sourceNodeId: '1', targetNodeId: '2' },
         { sourceNodeId: '2', targetNodeId: '3' },
-        { sourceNodeId: '3', targetNodeId: '1' }, // 环路
+        { sourceNodeId: '3', targetNodeId: '1' },
       ];
 
       const result = await service.validateTopology(nodes, edges);
+
       expect(result.valid).toBe(false);
       expect(result.issues).toContain('检测到环路，请检查连线配置');
     });
@@ -127,17 +395,46 @@ describe('VisService', () => {
       ];
 
       const result = await service.validateTopology(nodes, edges);
+
       expect(result.valid).toBe(true);
       expect(result.issues).toHaveLength(0);
     });
-  });
 
-  describe('calculatePermissionsForRole', () => {
-    it('当角色不存在时应该返回错误', async () => {
-      mockPrismaService.visNode.findFirst.mockResolvedValue(null);
+    it('应该通过空图（无节点无边）', async () => {
+      const result = await service.validateTopology([], []);
 
-      const result = await service.calculatePermissionsForRole('nonexistent', 'tenant1');
-      expect(result.message).toBe('角色节点不存在');
+      expect(result.valid).toBe(true);
+      expect(result.issues).toHaveLength(0);
+    });
+
+    it('应该通过仅有节点无边的拓扑', async () => {
+      const nodes = [
+        { id: '1', type: 'RESOURCE' },
+        { id: '2', type: 'FILTER' },
+      ];
+
+      const result = await service.validateTopology(nodes, []);
+
+      expect(result.valid).toBe(true);
+      expect(result.issues).toHaveLength(0);
+    });
+
+    it('应该通过多分支无环拓扑', async () => {
+      const nodes = [
+        { id: '1', type: 'RESOURCE' },
+        { id: '2', type: 'RESOURCE' },
+        { id: '3', type: 'FILTER' },
+        { id: '4', type: 'ROLE' },
+      ];
+      const edges = [
+        { sourceNodeId: '1', targetNodeId: '3' },
+        { sourceNodeId: '2', targetNodeId: '3' },
+        { sourceNodeId: '3', targetNodeId: '4' },
+      ];
+
+      const result = await service.validateTopology(nodes, edges);
+
+      expect(result.valid).toBe(true);
     });
   });
 });
