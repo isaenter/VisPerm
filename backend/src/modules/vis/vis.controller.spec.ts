@@ -186,7 +186,7 @@ describe('VisController', () => {
   describe('calculatePermissions', () => {
     it('应该调用 service 计算角色权限', async () => {
       const mockPermissions = {
-        roleId: 'role1',
+        roleCode: 'role1',
         resources: ['resource1'],
         filters: [],
         paths: [],
@@ -207,7 +207,7 @@ describe('VisController', () => {
       mockVisService.validateTopology.mockResolvedValue(mockValidation);
 
       const nodes = [{ id: '1', type: 'RESOURCE' }];
-      const edges = [];
+      const edges: any[] = [];
       const result = await controller.validateGraph(nodes, edges);
 
       expect(result).toEqual(mockValidation);

@@ -34,6 +34,7 @@ export const TenantId = createParamDecorator(
 /**
  * 租户验证守卫
  * 确保每个请求都包含有效的 tenantId
+ * 生产环境应配置为拒绝缺少 tenantId 的请求
  */
 @Injectable()
 export class TenantGuard implements CanActivate {
@@ -50,26 +51,5 @@ export class TenantGuard implements CanActivate {
     }
 
     return true;
-  }
-}
-
-/**
- * 租户上下文服务
- * 用于在 Service 层获取当前租户
- */
-@Injectable()
-export class TenantContextService {
-  private readonly storage = new Map<string, string>();
-
-  set(key: string, tenantId: string) {
-    this.storage.set(key, tenantId);
-  }
-
-  get(key: string): string | undefined {
-    return this.storage.get(key);
-  }
-
-  delete(key: string) {
-    this.storage.delete(key);
   }
 }

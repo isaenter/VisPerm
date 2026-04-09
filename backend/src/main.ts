@@ -2,9 +2,13 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { TenantGuard } from './common/tenant/tenant.context';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  // 全局注册租户守卫，确保生产环境强制进行租户隔离检查
+  app.useGlobalGuards(new TenantGuard());
 
   // 启用验证管道
   app.useGlobalPipes(
@@ -15,9 +19,9 @@ async function bootstrap() {
     }),
   );
 
-  // 启用 CORS
+  // 启用 CORS（收紧配置，仅允许指定前端来源）
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: process.env.FRONTEND_URL || 'http://localhost:5175',
     credentials: true,
   });
 

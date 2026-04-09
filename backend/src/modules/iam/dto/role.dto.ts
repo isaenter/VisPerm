@@ -8,17 +8,17 @@ export class CreateRoleDto {
   @ApiProperty({ description: '租户 ID' })
   @IsNotEmpty()
   @IsString()
-  tenantId: string;  // 租户 ID
+  tenantId!: string;  // 租户 ID
 
   @ApiProperty({ description: '角色名称' })
   @IsNotEmpty()
   @IsString()
-  name: string;
+  name!: string;
 
   @ApiProperty({ description: '角色编码' })
   @IsNotEmpty()
   @IsString()
-  code: string;
+  code!: string;
 
   @ApiPropertyOptional({ description: '角色描述' })
   @IsOptional()
@@ -33,15 +33,15 @@ export class AssignRoleToUserDto {
   @ApiProperty({ description: '租户 ID' })
   @IsNotEmpty()
   @IsString()
-  tenantId: string;  // 租户 ID
+  tenantId!: string;  // 租户 ID
 
   @ApiProperty({ description: '用户 ID' })
   @IsNotEmpty()
   @IsString()
-  userId: string;
+  userId!: string;
 
   @ApiProperty({ description: '角色 ID' })
   @IsNotEmpty()
   @IsString()
-  roleId: string;
+  roleId!: string;
 }

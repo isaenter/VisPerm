@@ -8,12 +8,12 @@ export class CreateTopologyDto {
   @ApiProperty({ description: '租户 ID' })
   @IsNotEmpty()
   @IsString()
-  tenantId: string;
+  tenantId!: string;
 
   @ApiProperty({ description: '拓扑名称' })
   @IsNotEmpty()
   @IsString()
-  name: string;
+  name!: string;
 
   @ApiPropertyOptional({ description: '拓扑描述' })
   @IsOptional()
@@ -59,5 +59,5 @@ export class PublishTopologyDto {
   @ApiProperty({ description: '版本号（乐观锁）' })
   @IsInt()
   @Min(1)
-  version: number;
+  version!: number;
 }

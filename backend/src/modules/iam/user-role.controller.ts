@@ -27,12 +27,12 @@ class BatchAssignUserRoleDto {
   @ApiProperty({ description: '用户 ID' })
   @IsNotEmpty()
   @IsString()
-  userId: string;
+  userId!: string;
 
   @ApiProperty({ description: '角色 ID 列表', type: [String] })
   @IsArray()
   @ArrayMinSize(1)
-  roleIds: string[];
+  roleIds!: string[];
 
   @ApiPropertyOptional({ description: '租户 ID' })
   @IsOptional()

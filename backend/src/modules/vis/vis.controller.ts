@@ -122,12 +122,12 @@ export class VisController {
 
   // ==================== 拓扑图操作 ====================
 
-  @Get('graph/:roleId/calculate')
+  @Get('graph/:roleCode/calculate')
   @ApiOperation({ summary: '计算角色权限', description: '通过图遍历算法从角色节点反向遍历至资源节点，计算该角色的完整权限' })
-  @ApiParam({ name: 'roleId', description: '角色 ID' })
+  @ApiParam({ name: 'roleCode', description: '角色编码 (code 字段)' })
   @ApiResponse({ status: 200, description: '权限计算完成' })
-  async calculatePermissions(@Param('roleId') roleId: string, @TenantId() tenantId: string) {
-    return this.visService.calculatePermissionsForRole(roleId, tenantId);
+  async calculatePermissions(@Param('roleCode') roleCode: string, @TenantId() tenantId: string) {
+    return this.visService.calculatePermissionsForRole(roleCode, tenantId);
   }
 
   @Post('graph/validate')

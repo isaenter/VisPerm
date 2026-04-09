@@ -1,4 +1,4 @@
-import { IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsEnum, IsNotEmpty, IsOptional, IsString, IsUUID } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { EdgeType } from '@prisma/client';
 
@@ -8,23 +8,23 @@ import { EdgeType } from '@prisma/client';
 export class CreateEdgeDto {
   @ApiProperty({ description: '租户 ID' })
   @IsNotEmpty()
-  @IsString()
-  tenantId: string;  // 租户 ID
+  @IsUUID()
+  tenantId!: string;  // 租户 ID
 
   @ApiProperty({ description: '源节点 ID' })
   @IsNotEmpty()
-  @IsString()
-  sourceNodeId: string;
+  @IsUUID()
+  sourceNodeId!: string;
 
   @ApiProperty({ description: '目标节点 ID' })
   @IsNotEmpty()
-  @IsString()
-  targetNodeId: string;
+  @IsUUID()
+  targetNodeId!: string;
 
   @ApiProperty({ enum: EdgeType, description: '连线类型' })
   @IsNotEmpty()
   @IsEnum(EdgeType)
-  type: EdgeType;
+  type!: EdgeType;
 
   @ApiPropertyOptional({ description: '连线配置（JSON）' })
   @IsOptional()

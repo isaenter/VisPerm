@@ -38,12 +38,12 @@ export class SimulationRunDto {
  * 模拟运行中单个资源的权限详情
  */
 export class SimulatedResourceDto {
-  resourceCode: string;
-  resourceName: string;
+  resourceCode!: string;
+  resourceName!: string;
   /** 该资源是通过哪些路径获得的 */
-  viaPaths: string[];
+  viaPaths!: string[];
   /** 最终权限类型: granted / denied */
-  effectivePermission: 'granted' | 'denied';
+  effectivePermission!: 'granted' | 'denied';
   /** 应用了哪些过滤器 */
-  appliedFilters: string[];
+  appliedFilters!: string[];
 }

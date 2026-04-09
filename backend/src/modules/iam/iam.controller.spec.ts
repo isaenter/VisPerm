@@ -13,6 +13,7 @@ describe('IamController', () => {
     findAllRoles: jest.fn(),
     findRoleById: jest.fn(),
     createRole: jest.fn(),
+    deleteRole: jest.fn(),
     getUserRoles: jest.fn(),
     assignRoleToUser: jest.fn(),
     getUserPermissions: jest.fn(),
@@ -64,10 +65,10 @@ describe('IamController', () => {
       const mockRole = { id: '1', name: 'Admin', code: 'admin' };
       mockIamService.findRoleById.mockResolvedValue(mockRole);
 
-      const result = await controller.findRoleById('1');
+      const result = await controller.findRoleById('1', 't1');
 
       expect(result).toEqual(mockRole);
-      expect(service.findRoleById).toHaveBeenCalledWith('1');
+      expect(service.findRoleById).toHaveBeenCalledWith('1', 't1');
     });
   });
 
@@ -86,6 +87,17 @@ describe('IamController', () => {
 
       expect(result).toEqual(mockRole);
       expect(service.createRole).toHaveBeenCalledWith({ ...dto, tenantId: 't1' });
+    });
+  });
+
+  describe('deleteRole', () => {
+    it('应该删除角色并返回结果', async () => {
+      mockIamService.deleteRole.mockResolvedValue({ id: '1', name: 'Deleted Role' });
+
+      const result = await controller.deleteRole('1', 't1');
+
+      expect(result).toEqual({ id: '1', name: 'Deleted Role' });
+      expect(service.deleteRole).toHaveBeenCalledWith('1', 't1');
     });
   });
 

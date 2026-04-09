@@ -5,6 +5,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { VisService } from '../src/modules/vis/vis.service';
 import { PrismaService } from '../src/modules/prisma/prisma.service';
+import { CacheService } from '../src/modules/cache/cache.service';
+import { AuditService } from '../src/modules/audit/audit.service';
 
 describe('VisPerm 集成测试', () => {
   let visService: VisService;
@@ -18,13 +20,43 @@ describe('VisPerm 集成测试', () => {
       create: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      deleteMany: jest.fn(),
     },
     visEdge: {
       findMany: jest.fn(),
       findFirst: jest.fn(),
       create: jest.fn(),
       delete: jest.fn(),
+      deleteMany: jest.fn(),
     },
+    visTopology: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    },
+    visSnapshot: {
+      findMany: jest.fn(),
+      findFirst: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+    },
+    sysUserRole: {
+      findMany: jest.fn(),
+    },
+  };
+
+  const mockCacheService = {
+    get: jest.fn().mockResolvedValue(null),
+    set: jest.fn().mockResolvedValue(undefined),
+    del: jest.fn().mockResolvedValue(undefined),
+    clearPattern: jest.fn().mockResolvedValue(undefined),
+  };
+
+  const mockAuditService = {
+    logAction: jest.fn().mockResolvedValue(undefined),
+    findAuditLogs: jest.fn().mockResolvedValue({ logs: [], total: 0 }),
   };
 
   beforeEach(async () => {
@@ -34,6 +66,14 @@ describe('VisPerm 集成测试', () => {
         {
           provide: PrismaService,
           useValue: mockPrismaService,
+        },
+        {
+          provide: CacheService,
+          useValue: mockCacheService,
+        },
+        {
+          provide: AuditService,
+          useValue: mockAuditService,
         },
       ],
     }).compile();

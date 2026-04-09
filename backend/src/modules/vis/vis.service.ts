@@ -88,21 +88,27 @@ export class VisService {
   /**
    * 删除节点
    * 修复：添加 tenantId 过滤，防止 IDOR 越权
+   * 使用 prisma.$transaction 确保删除节点和关联连线的原子性
    */
   async deleteNode(id: string, tenantId: string) {
-    const node = await this.prisma.visNode.findUnique({ where: { id, tenantId } });
-    // 先删除关联的连线（仅限当前租户）
-    await this.prisma.visEdge.deleteMany({
-      where: {
-        tenantId,
-        OR: [{ sourceNodeId: id }, { targetNodeId: id }],
-      },
-    });
-    const result = await this.prisma.visNode.delete({
-      where: { id, tenantId },
+    // 使用事务确保原子性：先查询节点，再删除关联连线，最后删除节点
+    const result = await this.prisma.$transaction(async (tx) => {
+      const node = await tx.visNode.findUnique({ where: { id, tenantId } });
+      if (!node) {
+        throw new NotFoundException(`节点 ${id} 不存在`);
+      }
+      // 先删除关联的连线（仅限当前租户）
+      await tx.visEdge.deleteMany({
+        where: {
+          tenantId,
+          OR: [{ sourceNodeId: id }, { targetNodeId: id }],
+        },
+      });
+      // 再删除节点
+      return tx.visNode.delete({ where: { id, tenantId } });
     });
     // 记录审计日志
-    this.auditService.logAction(tenantId, 'DELETE', 'node', id, undefined, { name: node?.name });
+    this.auditService.logAction(tenantId, 'DELETE', 'node', id, undefined, { name: result.name });
     // 节点变更时清除相关权限缓存
     this.cacheService.clearPattern('perm:*');
     return result;
@@ -174,14 +180,18 @@ export class VisService {
   /**
    * 删除连线
    * 修复：添加 tenantId 过滤，防止 IDOR 越权
+   * 使用 prisma.$transaction 确保原子性
    */
   async deleteEdge(id: string, tenantId: string) {
-    const edge = await this.prisma.visEdge.findUnique({ where: { id, tenantId } });
-    const result = await this.prisma.visEdge.delete({
-      where: { id, tenantId },
+    const result = await this.prisma.$transaction(async (tx) => {
+      const edge = await tx.visEdge.findUnique({ where: { id, tenantId } });
+      if (!edge) {
+        throw new NotFoundException(`连线 ${id} 不存在`);
+      }
+      return tx.visEdge.delete({ where: { id, tenantId } });
     });
     // 记录审计日志
-    this.auditService.logAction(tenantId, 'DELETE', 'edge', id, undefined, { type: edge?.type });
+    this.auditService.logAction(tenantId, 'DELETE', 'edge', id, undefined, { type: result.type });
     // 边变更时清除相关权限缓存
     this.cacheService.clearPattern('perm:*');
     return result;
@@ -466,11 +476,11 @@ export class VisService {
    * - EXTENSION (扩展): 权限追加 (APPEND) - 在已有权限基础上追加额外资源
    * - DENY (排除): 权限剔除 (EXCLUSION) - 从最终结果中剔除被排除的资源
    * 
-   * 集成 Redis 缓存：key = `perm:{roleId}:{tenantId}`, TTL = 300s
+   * 集成 Redis 缓存：key = `perm:{roleCode}:{tenantId}`, TTL = 300s
    */
-  async calculatePermissionsForRole(roleId: string, tenantId: string, env?: string) {
+  async calculatePermissionsForRole(roleCode: string, tenantId: string, env?: string) {
     // 尝试从缓存读取
-    const cacheKey = `perm:${roleId}:${tenantId}`;
+    const cacheKey = `perm:${roleCode}:${tenantId}`;
     const cached = await this.cacheService.get(cacheKey);
     if (cached) {
       try {
@@ -480,14 +490,14 @@ export class VisService {
       }
     }
 
-    // 1. 找到角色节点（已有 tenantId 过滤）
+    // 1. 找到角色节点（使用 roleCode 查询 code 字段，已有 tenantId 过滤）
     const roleNode = await this.prisma.visNode.findFirst({
-      where: { code: roleId, tenantId, type: 'ROLE', ...(env ? { env } : {}) },
+      where: { code: roleCode, tenantId, type: 'ROLE', ...(env ? { env } : {}) },
     });
 
     if (!roleNode) {
       return {
-        roleId,
+        roleCode,
         resources: [],
         filters: [],
         deniedResources: [],
@@ -502,7 +512,7 @@ export class VisService {
     const mergedPermissions = this.mergePermissionsByEdgeType(result);
 
     const response = {
-      roleId,
+      roleCode,
       resources: mergedPermissions.grantedResources,
       deniedResources: mergedPermissions.deniedResources,
       filters: mergedPermissions.filters,
@@ -599,11 +609,12 @@ export class VisService {
   /**
    * 按 EdgeType 合并权限
    * 
-   * 合并策略：
+   * 合并策略（拒绝优先 Deny-First）：
    * 1. 以 INHERITANCE 资源为基础集合
    * 2. 若存在 NARROWING 资源，则取交集（收窄权限范围）
    * 3. 追加 EXTENSION 资源（扩展权限）
-   * 4. 剔除 DENY 资源（排除权限）
+   * 4. 【拒绝优先】如果存在 DENY 边，无论其他边如何，被 DENY 的资源必须从最终结果中剔除
+   *    并记录审计日志
    */
   private mergePermissionsByEdgeType(data: {
     resourcesByType: Record<string, Set<string>>;
@@ -635,11 +646,19 @@ export class VisService {
       grantedResources.add(resource);
     }
 
-    // 步骤4: 剔除排除(DENY)资源
-    // 排除逻辑：从最终结果中移除被排除的资源
+    // 步骤4: 【拒绝优先 Deny-First】剔除排除(DENY)资源
+    // 如果存在 DENY 边，无论其他边如何，最终权限必须被剔除
+    // 同时记录审计日志
     const deniedResources = new Set<string>(DENY);
-    for (const resource of DENY) {
-      grantedResources.delete(resource);
+    if (deniedResources.size > 0) {
+      const deniedList = Array.from(deniedResources);
+      // 记录拒绝优先的审计日志
+      this.logger.warn(
+        `【拒绝优先策略】检测到 DENY 边，已从权限中剔除以下资源: ${deniedList.join(', ')}`,
+      );
+      for (const resource of deniedResources) {
+        grantedResources.delete(resource);
+      }
     }
 
     // 合并所有过滤器表达式

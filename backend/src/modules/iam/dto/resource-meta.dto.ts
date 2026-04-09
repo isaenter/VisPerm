@@ -9,17 +9,17 @@ export class ResourceFieldDto {
   @ApiProperty({ description: '字段名称' })
   @IsNotEmpty()
   @IsString()
-  name: string;
+  name!: string;
 
   @ApiProperty({ description: '字段类型', example: 'string' })
   @IsNotEmpty()
   @IsString()
-  type: string;
+  type!: string;
 
   @ApiProperty({ description: '字段显示标签' })
   @IsNotEmpty()
   @IsString()
-  label: string;
+  label!: string;
 }
 
 /**
@@ -29,23 +29,23 @@ export class CreateResourceMetaDto {
   @ApiProperty({ description: '租户 ID' })
   @IsNotEmpty()
   @IsString()
-  tenantId: string;
+  tenantId!: string;
 
   @ApiProperty({ description: '资源编码' })
   @IsNotEmpty()
   @IsString()
-  resourceCode: string;
+  resourceCode!: string;
 
   @ApiProperty({ description: '资源名称' })
   @IsNotEmpty()
   @IsString()
-  name: string;
+  name!: string;
 
   @ApiProperty({ description: '资源字段定义列表', type: [ResourceFieldDto] })
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => ResourceFieldDto)
-  fields: ResourceFieldDto[];
+  fields!: ResourceFieldDto[];
 }
 
 /**

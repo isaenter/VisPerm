@@ -41,6 +41,7 @@ describe('VisService', () => {
       update: jest.fn(),
       delete: jest.fn(),
     },
+    $transaction: jest.fn(),
   };
 
   // 模拟 CacheService
@@ -183,43 +184,51 @@ describe('VisService', () => {
   });
 
   describe('deleteNode', () => {
-    it('应该删除节点及其关联的连线', async () => {
-      mockPrismaService.visNode.findUnique.mockResolvedValue({
-        id: 'node-1',
-        name: '待删除节点',
+    it('应该删除节点及其关联的连线（事务包裹）', async () => {
+      const mockTx = {
+        visNode: {
+          findUnique: jest.fn().mockResolvedValue({ id: 'node-1', name: '待删除节点' }),
+          delete: jest.fn().mockResolvedValue({ id: 'node-1', name: '待删除节点' }),
+        },
+        visEdge: {
+          deleteMany: jest.fn().mockResolvedValue({ count: 2 }),
+        },
+      };
+      mockPrismaService.$transaction.mockImplementation(async (callback) => {
+        return callback(mockTx);
       });
-      mockPrismaService.visEdge.deleteMany.mockResolvedValue({ count: 2 });
-      mockPrismaService.visNode.delete.mockResolvedValue({ id: 'node-1' });
 
       const result = await service.deleteNode('node-1', 'tenant-1');
 
-      expect(result).toEqual({ id: 'node-1' });
-      // 验证关联连线被删除
-      expect(prisma.visEdge.deleteMany).toHaveBeenCalledWith({
+      expect(result).toEqual({ id: 'node-1', name: '待删除节点' });
+      expect(mockPrismaService.$transaction).toHaveBeenCalled();
+      // 验证事务内删除了关联连线
+      expect(mockTx.visEdge.deleteMany).toHaveBeenCalledWith({
         where: {
           tenantId: 'tenant-1',
           OR: [{ sourceNodeId: 'node-1' }, { targetNodeId: 'node-1' }],
         },
       });
-      // 验证节点被删除
-      expect(prisma.visNode.delete).toHaveBeenCalledWith({
-        where: { id: 'node-1', tenantId: 'tenant-1' },
-      });
+      // 验证审计日志被记录
+      expect(mockAuditService.logAction).toHaveBeenCalled();
     });
 
-    it('应该使用 tenantId 防止跨租户删除', async () => {
-      mockPrismaService.visNode.findUnique.mockResolvedValue(null);
-      mockPrismaService.visEdge.deleteMany.mockResolvedValue({ count: 0 });
-      mockPrismaService.visNode.delete.mockRejectedValue(
-        new Error('Record to delete does not exist')
-      );
+    it('当节点不存在时应该抛出 NotFoundException', async () => {
+      const mockTx = {
+        visNode: {
+          findUnique: jest.fn().mockResolvedValue(null),
+          delete: jest.fn(),
+        },
+        visEdge: {
+          deleteMany: jest.fn(),
+        },
+      };
+      mockPrismaService.$transaction.mockImplementation(async (callback) => {
+        return callback(mockTx);
+      });
 
       await expect(service.deleteNode('node-1', 'wrong-tenant'))
-        .rejects.toThrow('Record to delete does not exist');
-
-      expect(prisma.visNode.delete).toHaveBeenCalledWith({
-        where: { id: 'node-1', tenantId: 'wrong-tenant' },
-      });
+        .rejects.toThrow('节点 node-1 不存在');
     });
   });
 

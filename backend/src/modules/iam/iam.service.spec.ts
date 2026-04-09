@@ -21,12 +21,14 @@ describe('IamService', () => {
       findMany: jest.fn(),
       findUnique: jest.fn(),
       create: jest.fn(),
+      delete: jest.fn(),
     },
     sysUserRole: {
       findMany: jest.fn(),
       create: jest.fn(),
       findUnique: jest.fn(),
       delete: jest.fn(),
+      deleteMany: jest.fn(),
     },
     sysResourceMeta: {
       findMany: jest.fn(),
@@ -35,6 +37,7 @@ describe('IamService', () => {
       update: jest.fn(),
       delete: jest.fn(),
     },
+    $transaction: jest.fn(),
   };
 
   // 模拟 VisService
@@ -232,13 +235,13 @@ describe('IamService', () => {
       // 模拟每个角色的权限计算结果
       mockVisService.calculatePermissionsForRole
         .mockResolvedValueOnce({
-          roleId: 'role-1',
+          roleCode: 'admin',
           resources: ['user_data', 'order_data'],
           filters: [],
           deniedResources: [],
         })
         .mockResolvedValueOnce({
-          roleId: 'role-2',
+          roleCode: 'editor',
           resources: ['article_data'],
           filters: ['status_filter'],
           deniedResources: [],
@@ -273,7 +276,7 @@ describe('IamService', () => {
       ];
       mockPrismaService.sysUserRole.findMany.mockResolvedValue(mockUserRoles);
       mockVisService.calculatePermissionsForRole.mockResolvedValue({
-        roleId: 'role-1',
+        roleCode: 'admin',
         resources: [],
         filters: [],
         deniedResources: [],
@@ -282,7 +285,7 @@ describe('IamService', () => {
       await service.getUserPermissions('user-1', 'specific-tenant');
 
       expect(mockVisService.calculatePermissionsForRole).toHaveBeenCalledWith(
-        'role-1',
+        'admin',
         'specific-tenant',
       );
     });

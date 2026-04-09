@@ -27,9 +27,9 @@ export class IamService {
     });
   }
 
-  async findRoleById(id: string) {
+  async findRoleById(id: string, tenantId: string) {
     return this.prisma.sysRole.findUnique({
-      where: { id },
+      where: { id, tenantId },
     });
   }
 
@@ -45,6 +45,31 @@ export class IamService {
     // 记录审计日志
     this.auditService.logAction(dto.tenantId, 'CREATE', 'role', role.id, undefined, { name: role.name, code: role.code });
     return role;
+  }
+
+  /**
+   * 删除角色
+   * 同时删除该角色关联的所有用户角色分配
+   * 使用事务确保原子性
+   */
+  async deleteRole(id: string, tenantId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const role = await tx.sysRole.findUnique({
+        where: { id, tenantId },
+      });
+
+      if (!role) {
+        throw new NotFoundException(`角色 ${id} 不存在`);
+      }
+
+      // 删除关联的用户角色分配
+      await tx.sysUserRole.deleteMany({
+        where: { roleId: id, tenantId },
+      });
+
+      // 删除角色
+      return tx.sysRole.delete({ where: { id, tenantId } });
+    });
   }
 
   // ==================== 用户角色管理 ====================
@@ -84,10 +109,10 @@ export class IamService {
     // 1. 获取用户的所有角色
     const roles = await this.getUserRoles(userId, tenantId);
 
-    // 2. 对每个角色，通过拓扑图计算权限
+    // 2. 对每个角色，通过拓扑图计算权限（使用 role.code 作为角色编码）
     const allPermissions: any[] = [];
     for (const role of roles) {
-      const perms = await this.visService.calculatePermissionsForRole(role.id, tenantId);
+      const perms = await this.visService.calculatePermissionsForRole(role.code, tenantId);
       allPermissions.push(perms);
     }
 
@@ -131,7 +156,7 @@ export class IamService {
         resourceCode: dto.resourceCode,
         name: dto.name,
         // 将 DTO 数组转换为纯 JSON 对象以兼容 Prisma
-        fields: dto.fields.map(f => ({ name: f.name, type: f.type, label: f.label })) as any,
+        fields: this.convertFieldsToJson(dto.fields) as any,
       },
     });
   }
@@ -153,9 +178,17 @@ export class IamService {
       data: {
         name: dto.name ?? undefined,
         // 将 DTO 数组转换为纯 JSON 对象以兼容 Prisma
-        fields: dto.fields ? (dto.fields.map(f => ({ name: f.name, type: f.type, label: f.label })) as any) : undefined,
+        fields: dto.fields ? (this.convertFieldsToJson(dto.fields) as any) : undefined,
       },
     });
+  }
+
+  /**
+   * 公共方法：将 DTO 字段数组转换为 Prisma 兼容的 JSON 格式
+   * 提取重复的转换逻辑，避免代码冗余
+   */
+  private convertFieldsToJson(fields: Array<{ name: string; type: string; label: string }>) {
+    return fields.map(f => ({ name: f.name, type: f.type, label: f.label }));
   }
 
   /**

@@ -8,7 +8,7 @@ export class CreateSnapshotDto {
   @ApiProperty({ description: '拓扑 ID' })
   @IsNotEmpty()
   @IsString()
-  topologyId: string;
+  topologyId!: string;
 
   @ApiPropertyOptional({ description: '租户 ID' })
   @IsOptional()
