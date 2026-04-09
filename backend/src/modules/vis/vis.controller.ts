@@ -76,8 +76,8 @@ export class VisController {
   // ==================== 拓扑图操作 ====================
 
   @Get('graph/:roleId/calculate')
-  async calculatePermissions(@Param('roleId') roleId: string) {
-    return this.visService.calculatePermissionsForRole(roleId);
+  async calculatePermissions(@Param('roleId') roleId: string, @Body('tenantId') tenantId: string = 'default') {
+    return this.visService.calculatePermissionsForRole(roleId, tenantId);
   }
 
   @Post('graph/validate')

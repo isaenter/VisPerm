@@ -85,7 +85,7 @@ export class VisService {
 
   async createEdge(dto: CreateEdgeDto) {
     // 验证连线合法性
-    const validation = this.validateEdgeConnection(dto.sourceNodeId, dto.targetNodeId, dto.type);
+    const validation = await this.validateEdgeConnection(dto.sourceNodeId, dto.targetNodeId, dto.type);
     if (!validation.valid) {
       throw new Error(validation.reason);
     }
@@ -134,13 +134,52 @@ export class VisService {
    * - ADDON -> ROLE (增量包只能连向角色)
    * - 禁止 ROLE -> RESOURCE 等反向连接
    */
-  private validateEdgeConnection(
+  async validateEdgeConnection(
     sourceId: string,
     targetId: string,
     edgeType: string,
-  ): { valid: boolean; reason?: string } {
-    // 实际实现中需要查询节点类型
-    // 这里先返回通过，待后续完善
+  ): Promise<{ valid: boolean; reason?: string }> {
+    // 查询源节点和目标节点
+    const [sourceNode, targetNode] = await Promise.all([
+      this.prisma.visNode.findUnique({ where: { id: sourceId }, select: { type: true } }),
+      this.prisma.visNode.findUnique({ where: { id: targetId }, select: { type: true } }),
+    ]);
+
+    if (!sourceNode || !targetNode) {
+      return { valid: false, reason: '源节点或目标节点不存在' };
+    }
+
+    const sourceType = sourceNode.type;
+    const targetType = targetNode.type;
+
+    // 合法性规则矩阵
+    const validConnections: Record<string, string[]> = {
+      RESOURCE: ['FILTER'],        // 资源只能连向过滤器
+      FILTER: ['ROLE', 'FILTER'],  // 过滤器可以连向角色或其他过滤器
+      ADDON: ['ROLE'],             // 增量包只能连向角色
+      ROLE: [],                    // 角色不能作为源节点（数据单向流动）
+    };
+
+    const allowedTargets = validConnections[sourceType] || [];
+    if (!allowedTargets.includes(targetType)) {
+      return {
+        valid: false,
+        reason: `不允许的连线：${sourceType} -> ${targetType}。允许的连接：${allowedTargets.join(', ') || '无'}`,
+      };
+    }
+
+    // 检查是否已存在重边
+    const existingEdge = await this.prisma.visEdge.findFirst({
+      where: {
+        sourceNodeId: sourceId,
+        targetNodeId: targetId,
+      },
+    });
+
+    if (existingEdge) {
+      return { valid: false, reason: '已存在相同的连线' };
+    }
+
     return { valid: true };
   }
 
@@ -207,19 +246,104 @@ export class VisService {
    * 计算指定角色的权限
    * 通过图遍历算法从角色节点反向遍历至资源节点
    */
-  async calculatePermissionsForRole(roleId: string) {
-    // TODO: 实现图遍历权限计算算法
+  async calculatePermissionsForRole(roleId: string, tenantId: string) {
     // 1. 找到角色节点
-    // 2. DFS/BFS 反向遍历所有连线和节点
-    // 3. 根据连线类型（INHERITANCE/NARROWING/EXTENSION/DENY）聚合权限
-    // 4. 应用过滤器规则
-    // 5. 返回最终权限结果
+    const roleNode = await this.prisma.visNode.findFirst({
+      where: { code: roleId, tenantId, type: 'ROLE' },
+    });
+
+    if (!roleNode) {
+      return {
+        roleId,
+        resources: [],
+        filters: [],
+        message: '角色节点不存在',
+      };
+    }
+
+    // 2. DFS 反向遍历所有连线和节点
+    const visited = new Set<string>();
+    const resources = new Set<string>();
+    const filters: { expr: string; priority: 'extension' | 'inheritance' | 'narrowing' }[] = [];
+    const paths: { nodeId: string; type: string; edgeType?: string }[] = [];
+
+    const dfs = async (nodeId: string, incomingEdgeType?: string) => {
+      if (visited.has(nodeId)) return;
+      visited.add(nodeId);
+
+      const node = await this.prisma.visNode.findUnique({
+        where: { id: nodeId },
+        include: {
+          incomingEdges: {
+            include: { sourceNode: true },
+          },
+        },
+      });
+
+      if (!node) return;
+
+      paths.push({ nodeId: node.id, type: node.type, edgeType: incomingEdgeType });
+
+      // 收集资源
+      if (node.type === 'RESOURCE') {
+        resources.add(node.code || node.name);
+      }
+
+      // 收集过滤器
+      if (node.type === 'FILTER' && node.config) {
+        const config = node.config as any;
+        if (config.expression) {
+          filters.push({
+            expr: config.expression,
+            priority: incomingEdgeType === 'EXTENSION' ? 'extension' :
+                      incomingEdgeType === 'NARROWING' ? 'narrowing' : 'inheritance',
+          });
+        }
+      }
+
+      // 继续遍历入边
+      for (const edge of node.incomingEdges || []) {
+        await dfs(edge.sourceNode.id, edge.type);
+      }
+    };
+
+    await dfs(roleNode.id);
+
+    // 3. 合并过滤器
+    const filterExpression = this.mergeFilters(filters);
 
     return {
       roleId,
-      resources: [],
-      filters: [],
-      message: '权限计算引擎开发中...',
+      resources: Array.from(resources),
+      filters: filterExpression ? [filterExpression] : [],
+      paths,
+      message: '权限计算完成',
     };
+  }
+
+  /**
+   * 合并过滤器表达式
+   */
+  private mergeFilters(filters: { expr: string; priority: string }[]): string {
+    if (filters.length === 0) return '';
+
+    const byPriority = {
+      extension: filters.filter(f => f.priority === 'extension').map(f => f.expr),
+      inheritance: filters.filter(f => f.priority === 'inheritance').map(f => f.expr),
+      narrowing: filters.filter(f => f.priority === 'narrowing').map(f => f.expr),
+    };
+
+    const exprs: string[] = [];
+    if (byPriority.extension.length > 0) {
+      exprs.push(`(${byPriority.extension.join(' OR ')})`);
+    }
+    if (byPriority.inheritance.length > 0) {
+      exprs.push(`(${byPriority.inheritance.join(' OR ')})`);
+    }
+    if (byPriority.narrowing.length > 0) {
+      exprs.push(`(${byPriority.narrowing.join(' AND ')})`);
+    }
+
+    return exprs.join(' OR ');
   }
 }
