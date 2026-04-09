@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../prisma/prisma.service';
 import { IamService } from './iam.service';
+import { VisService } from '../vis/vis.service';
 import { CreateRoleDto, AssignRoleToUserDto } from './dto/role.dto';
 
 describe('IamService', () => {
@@ -19,6 +20,10 @@ describe('IamService', () => {
     },
   };
 
+  const mockVisService = {
+    calculatePermissionsForRole: jest.fn(),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -26,6 +31,10 @@ describe('IamService', () => {
         {
           provide: PrismaService,
           useValue: mockPrismaService,
+        },
+        {
+          provide: VisService,
+          useValue: mockVisService,
         },
       ],
     }).compile();
@@ -46,9 +55,10 @@ describe('IamService', () => {
       ];
       mockPrismaService.sysRole.findMany.mockResolvedValue(mockRoles);
 
-      const result = await service.findAllRoles();
+      const result = await service.findAllRoles('tenant1');
       expect(result).toEqual(mockRoles);
       expect(prisma.sysRole.findMany).toHaveBeenCalledWith({
+        where: { tenantId: 'tenant1' },
         orderBy: { createdAt: 'desc' },
       });
     });
@@ -86,7 +96,7 @@ describe('IamService', () => {
       ];
       mockPrismaService.sysUserRole.findMany.mockResolvedValue(mockUserRoles);
 
-      const result = await service.getUserRoles('user1');
+      const result = await service.getUserRoles('user1', 'tenant1');
       expect(result).toEqual([
         { id: '1', name: 'Admin', code: 'admin' },
         { id: '2', name: 'User', code: 'user' },

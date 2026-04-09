@@ -1,18 +1,23 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateRoleDto, AssignRoleToUserDto } from './dto/role.dto';
+import { VisService } from '../vis/vis.service';
 
 /**
  * IAM 权限服务
  */
 @Injectable()
 export class IamService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly visService: VisService,
+  ) {}
 
   // ==================== 角色管理 ====================
 
-  async findAllRoles() {
+  async findAllRoles(tenantId: string) {
     return this.prisma.sysRole.findMany({
+      where: { tenantId },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -36,9 +41,9 @@ export class IamService {
 
   // ==================== 用户角色管理 ====================
 
-  async getUserRoles(userId: string) {
+  async getUserRoles(userId: string, tenantId: string) {
     const userRoles = await this.prisma.sysUserRole.findMany({
-      where: { userId },
+      where: { userId, tenantId },
       include: {
         role: true,
       },
@@ -62,18 +67,22 @@ export class IamService {
    * 获取用户权限
    * 结合拓扑图计算用户的最终权限
    */
-  async getUserPermissions(userId: string) {
+  async getUserPermissions(userId: string, tenantId: string) {
     // 1. 获取用户的所有角色
-    const roles = await this.getUserRoles(userId);
+    const roles = await this.getUserRoles(userId, tenantId);
 
     // 2. 对每个角色，通过拓扑图计算权限
-    // TODO: 调用 VisService 的权限计算引擎
+    const allPermissions: any[] = [];
+    for (const role of roles) {
+      const perms = await this.visService.calculatePermissionsForRole(role.id, tenantId);
+      allPermissions.push(perms);
+    }
 
     return {
       userId,
+      tenantId,
       roles,
-      permissions: [],
-      message: '权限计算引擎开发中...',
+      permissions: allPermissions,
     };
   }
 }

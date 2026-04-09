@@ -13,15 +13,16 @@ export class VisService {
 
   // ==================== 节点 CRUD ====================
 
-  async findAllNodes() {
+  async findAllNodes(tenantId: string) {
     return this.prisma.visNode.findMany({
+      where: { tenantId },
       orderBy: { createdAt: 'desc' },
     });
   }
 
-  async findNodeById(id: string) {
+  async findNodeById(id: string, tenantId: string) {
     return this.prisma.visNode.findUnique({
-      where: { id },
+      where: { id, tenantId },
       include: {
         outgoingEdges: {
           include: { targetNode: true },
@@ -73,8 +74,9 @@ export class VisService {
 
   // ==================== 连线 CRUD ====================
 
-  async findAllEdges() {
+  async findAllEdges(tenantId: string) {
     return this.prisma.visEdge.findMany({
+      where: { tenantId },
       include: {
         sourceNode: true,
         targetNode: true,

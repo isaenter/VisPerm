@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { IamService } from './iam.service';
 import { CreateRoleDto, AssignRoleToUserDto } from './dto/role.dto';
+import { TenantId } from '../../common/tenant/tenant.context';
 
 /**
  * IAM 权限管理控制器
@@ -19,8 +20,8 @@ export class IamController {
   // ==================== 角色管理 ====================
 
   @Get('roles')
-  async findAllRoles() {
-    return this.iamService.findAllRoles();
+  async findAllRoles(@TenantId() tenantId: string) {
+    return this.iamService.findAllRoles(tenantId);
   }
 
   @Get('roles/:id')
@@ -29,26 +30,26 @@ export class IamController {
   }
 
   @Post('roles')
-  async createRole(@Body() dto: CreateRoleDto) {
-    return this.iamService.createRole(dto);
+  async createRole(@Body() dto: CreateRoleDto, @TenantId() tenantId: string) {
+    return this.iamService.createRole({ ...dto, tenantId });
   }
 
   // ==================== 用户角色管理 ====================
 
   @Get('users/:userId/roles')
-  async getUserRoles(@Param('userId') userId: string) {
-    return this.iamService.getUserRoles(userId);
+  async getUserRoles(@Param('userId') userId: string, @TenantId() tenantId: string) {
+    return this.iamService.getUserRoles(userId, tenantId);
   }
 
   @Post('users/roles')
-  async assignRoleToUser(@Body() dto: AssignRoleToUserDto) {
-    return this.iamService.assignRoleToUser(dto);
+  async assignRoleToUser(@Body() dto: AssignRoleToUserDto, @TenantId() tenantId: string) {
+    return this.iamService.assignRoleToUser({ ...dto, tenantId });
   }
 
   // ==================== 权限查询 ====================
 
   @Get('users/:userId/permissions')
-  async getUserPermissions(@Param('userId') userId: string) {
-    return this.iamService.getUserPermissions(userId);
+  async getUserPermissions(@Param('userId') userId: string, @TenantId() tenantId: string) {
+    return this.iamService.getUserPermissions(userId, tenantId);
   }
 }

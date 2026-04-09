@@ -7,10 +7,12 @@ import {
   Body,
   Param,
   NotFoundException,
+  Query,
 } from '@nestjs/common';
 import { VisService } from './vis.service';
 import { CreateNodeDto, UpdateNodeDto } from './dto/node.dto';
 import { CreateEdgeDto, UpdateEdgeDto } from './dto/edge.dto';
+import { TenantId } from '../../common/tenant/tenant.context';
 
 /**
  * 可视化拓扑控制器
@@ -23,13 +25,13 @@ export class VisController {
   // ==================== 节点管理 ====================
 
   @Get('nodes')
-  async findAllNodes() {
-    return this.visService.findAllNodes();
+  async findAllNodes(@TenantId() tenantId: string) {
+    return this.visService.findAllNodes(tenantId);
   }
 
   @Get('nodes/:id')
-  async findNodeById(@Param('id') id: string) {
-    const node = await this.visService.findNodeById(id);
+  async findNodeById(@Param('id') id: string, @TenantId() tenantId: string) {
+    const node = await this.visService.findNodeById(id, tenantId);
     if (!node) {
       throw new NotFoundException(`节点 ${id} 不存在`);
     }
@@ -37,12 +39,12 @@ export class VisController {
   }
 
   @Post('nodes')
-  async createNode(@Body() dto: CreateNodeDto) {
-    return this.visService.createNode(dto);
+  async createNode(@Body() dto: CreateNodeDto, @TenantId() tenantId: string) {
+    return this.visService.createNode({ ...dto, tenantId });
   }
 
   @Put('nodes/:id')
-  async updateNode(@Param('id') id: string, @Body() dto: UpdateNodeDto) {
+  async updateNode(@Param('id') id: string, @Body() dto: UpdateNodeDto, @TenantId() tenantId: string) {
     return this.visService.updateNode(id, dto);
   }
 
@@ -54,13 +56,13 @@ export class VisController {
   // ==================== 连线管理 ====================
 
   @Get('edges')
-  async findAllEdges() {
-    return this.visService.findAllEdges();
+  async findAllEdges(@TenantId() tenantId: string) {
+    return this.visService.findAllEdges(tenantId);
   }
 
   @Post('edges')
-  async createEdge(@Body() dto: CreateEdgeDto) {
-    return this.visService.createEdge(dto);
+  async createEdge(@Body() dto: CreateEdgeDto, @TenantId() tenantId: string) {
+    return this.visService.createEdge({ ...dto, tenantId });
   }
 
   @Put('edges/:id')
@@ -76,7 +78,7 @@ export class VisController {
   // ==================== 拓扑图操作 ====================
 
   @Get('graph/:roleId/calculate')
-  async calculatePermissions(@Param('roleId') roleId: string, @Body('tenantId') tenantId: string = 'default') {
+  async calculatePermissions(@Param('roleId') roleId: string, @TenantId() tenantId: string) {
     return this.visService.calculatePermissionsForRole(roleId, tenantId);
   }
 
