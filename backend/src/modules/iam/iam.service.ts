@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateRoleDto, AssignRoleToUserDto } from './dto/role.dto';
+import { CreateResourceMetaDto, UpdateResourceMetaDto } from './dto/resource-meta.dto';
 import { VisService } from '../vis/vis.service';
 
 /**
@@ -84,5 +85,79 @@ export class IamService {
       roles,
       permissions: allPermissions,
     };
+  }
+
+  // ==================== 资源元数据管理 ====================
+
+  /**
+   * 获取所有资源元数据列表
+   * 支持按租户过滤
+   */
+  async findAllResourceMetas(tenantId: string) {
+    return this.prisma.sysResourceMeta.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * 根据资源编码获取元数据详情
+   */
+  async findResourceMetaByCode(resourceCode: string, tenantId: string) {
+    return this.prisma.sysResourceMeta.findUnique({
+      where: { tenantId_resourceCode: { tenantId, resourceCode } },
+    });
+  }
+
+  /**
+   * 创建资源元数据
+   */
+  async createResourceMeta(dto: CreateResourceMetaDto) {
+    return this.prisma.sysResourceMeta.create({
+      data: {
+        tenantId: dto.tenantId,
+        resourceCode: dto.resourceCode,
+        name: dto.name,
+        fields: dto.fields,
+      },
+    });
+  }
+
+  /**
+   * 更新资源元数据
+   */
+  async updateResourceMeta(resourceCode: string, tenantId: string, dto: UpdateResourceMetaDto) {
+    const existing = await this.prisma.sysResourceMeta.findUnique({
+      where: { tenantId_resourceCode: { tenantId, resourceCode } },
+    });
+
+    if (!existing) {
+      throw new NotFoundException(`资源元数据 ${resourceCode} 不存在`);
+    }
+
+    return this.prisma.sysResourceMeta.update({
+      where: { tenantId_resourceCode: { tenantId, resourceCode } },
+      data: {
+        name: dto.name ?? undefined,
+        fields: dto.fields ?? undefined,
+      },
+    });
+  }
+
+  /**
+   * 删除资源元数据
+   */
+  async deleteResourceMeta(resourceCode: string, tenantId: string) {
+    const existing = await this.prisma.sysResourceMeta.findUnique({
+      where: { tenantId_resourceCode: { tenantId, resourceCode } },
+    });
+
+    if (!existing) {
+      throw new NotFoundException(`资源元数据 ${resourceCode} 不存在`);
+    }
+
+    return this.prisma.sysResourceMeta.delete({
+      where: { tenantId_resourceCode: { tenantId, resourceCode } },
+    });
   }
 }

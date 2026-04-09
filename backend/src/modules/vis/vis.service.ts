@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateNodeDto, UpdateNodeDto } from './dto/node.dto';
 import { CreateEdgeDto, UpdateEdgeDto } from './dto/edge.dto';
+import { CreateTopologyDto, UpdateTopologyDto } from './dto/topology.dto';
 
 /**
  * 可视化拓扑服务
@@ -240,6 +241,124 @@ export class VisService {
       valid: issues.length === 0,
       issues,
     };
+  }
+
+  // ==================== 拓扑 CRUD ====================
+
+  /**
+   * 获取所有拓扑列表
+   * 支持按租户和环境过滤
+   */
+  async findAllTopologies(tenantId: string, env?: string) {
+    return this.prisma.visTopology.findMany({
+      where: {
+        tenantId,
+        ...(env ? { env } : {}),
+      },
+      include: {
+        nodes: {
+          include: {
+            outgoingEdges: { include: { targetNode: true } },
+            incomingEdges: { include: { sourceNode: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * 根据 ID 获取拓扑详情
+   */
+  async findTopologyById(id: string, tenantId: string) {
+    return this.prisma.visTopology.findUnique({
+      where: { id, tenantId },
+      include: {
+        nodes: {
+          include: {
+            outgoingEdges: { include: { targetNode: true } },
+            incomingEdges: { include: { sourceNode: true } },
+          },
+        },
+      },
+    });
+  }
+
+  /**
+   * 创建拓扑
+   */
+  async createTopology(dto: CreateTopologyDto) {
+    return this.prisma.visTopology.create({
+      data: {
+        tenantId: dto.tenantId,
+        name: dto.name,
+        description: dto.description,
+        env: dto.env ?? 'prod',
+      },
+    });
+  }
+
+  /**
+   * 更新拓扑
+   * 使用乐观锁机制（version 字段）防止并发覆盖
+   */
+  async updateTopology(id: string, dto: UpdateTopologyDto) {
+    const { version, ...updateData } = dto;
+    return this.prisma.visTopology.update({
+      where: {
+        id,
+        ...(version ? { version } : {}),
+      },
+      data: updateData,
+    });
+  }
+
+  /**
+   * 删除拓扑
+   * 同时删除关联的节点（级联删除）
+   */
+  async deleteTopology(id: string) {
+    // 先获取拓扑以确认存在
+    const topology = await this.prisma.visTopology.findUnique({
+      where: { id },
+      include: { nodes: { select: { id: true } } },
+    });
+
+    if (!topology) {
+      throw new NotFoundException(`拓扑 ${id} 不存在`);
+    }
+
+    // 删除关联的连线
+    if (topology.nodes.length > 0) {
+      const nodeIds = topology.nodes.map(n => n.id);
+      await this.prisma.visEdge.deleteMany({
+        where: {
+          OR: [
+            { sourceNodeId: { in: nodeIds } },
+            { targetNodeId: { in: nodeIds } },
+          ],
+        },
+      });
+    }
+
+    // 删除拓扑及其节点
+    return this.prisma.visTopology.delete({
+      where: { id },
+    });
+  }
+
+  /**
+   * 发布拓扑
+   * 将状态更新为 published，并递增版本号
+   */
+  async publishTopology(id: string, version: number) {
+    return this.prisma.visTopology.update({
+      where: { id, version },
+      data: {
+        status: 'published',
+        version: { increment: 1 },
+      },
+    });
   }
 
   // ==================== 权限计算 ====================
