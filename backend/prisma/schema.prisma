@@ -30,13 +30,15 @@ enum EdgeType {
 }
 
 // ============================================
-// 核心表：拓扑节点
+// 核心表：拓扑节点（支持多租户）
 // ============================================
 model VisNode {
   id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id") @db.VarChar(50)  // 租户 ID
+  env       String?  @default("prod") @db.VarChar(20)   // 环境标识：prod/pre/test
   type      NodeType
   name      String   @db.VarChar(100)
-  code      String?  @unique @db.VarChar(100)  // 资源 Code 或角色 Code
+  code      String?  @db.VarChar(100)  // 资源 Code 或角色 Code（租户内唯一）
   positionX Int?
   positionY Int?
   config    Json?    // 节点特有配置
@@ -47,14 +49,23 @@ model VisNode {
   outgoingEdges VisEdge[] @relation("EdgeSource")
   incomingEdges VisEdge[] @relation("EdgeTarget")
 
+  // 所属拓扑（可选）
+  topologyId String? @map("topology_id")
+  topology   VisTopology? @relation(fields: [topologyId], references: [id])
+
+  @@unique([tenantId, env, code])  // 租户内 code 唯一
+  @@index([tenantId, env, type])
+  @@index([tenantId, topologyId])
   @@map("vis_node")
 }
 
 // ============================================
-// 核心表：拓扑连线
+// 核心表：拓扑连线（支持多租户）
 // ============================================
 model VisEdge {
   id           String    @id @default(uuid())
+  tenantId     String    @map("tenant_id") @db.VarChar(50)  // 租户 ID
+  env          String?   @default("prod") @db.VarChar(20)   // 环境标识
   sourceNode   VisNode   @relation("EdgeSource", fields: [sourceNodeId], references: [id])
   sourceNodeId String    @map("source_node_id")
   targetNode   VisNode   @relation("EdgeTarget", fields: [targetNodeId], references: [id])
@@ -64,46 +75,111 @@ model VisEdge {
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
 
-  @@unique([sourceNodeId, targetNodeId]) // 防止重边
+  @@unique([tenantId, sourceNodeId, targetNodeId])  // 租户内防止重边
+  @@index([tenantId, type])
   @@map("vis_edge")
 }
 
 // ============================================
-// 系统表：资源元数据
+// 系统表：资源元数据（支持多租户）
 // ============================================
 model SysResourceMeta {
-  resourceCode String   @id @map("resource_code") @db.VarChar(100)
+  resourceCode String   @db.VarChar(100)
+  tenantId     String   @map("tenant_id") @db.VarChar(50)  // 租户 ID
   name         String   @db.VarChar(100)
   fields       Json     // [{name, type, label}...]
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
+  @@unique([tenantId, resourceCode])  // 租户内唯一
+  @@index([tenantId])
   @@map("sys_resource_meta")
 }
 
 // ============================================
-// 系统表：角色定义
+// 系统表：角色定义（支持多租户）
 // ============================================
 model SysRole {
   id          String   @id @default(uuid())
+  tenantId    String   @map("tenant_id") @db.VarChar(50)  // 租户 ID
   name        String   @db.VarChar(100)
-  code        String   @unique @db.VarChar(100)
+  code        String   @db.VarChar(100)
   description String?
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
+  @@unique([tenantId, code])  // 租户内 code 唯一
+  @@index([tenantId])
   @@map("sys_role")
 }
 
 // ============================================
-// 系统表：用户 - 角色关联
+// 系统表：用户 - 角色关联（支持多租户）
 // ============================================
 model SysUserRole {
   id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id") @db.VarChar(50)  // 租户 ID
   userId    String   @map("user_id") @db.VarChar(100)
   roleId    String   @map("role_id") @db.VarChar(100)
   createdAt DateTime @default(now()) @map("created_at")
 
-  @@unique([userId, roleId])
+  @@unique([tenantId, userId, roleId])
+  @@index([tenantId, userId])
+  @@index([tenantId, roleId])
   @@map("sys_user_role")
+}
+
+// ============================================
+// 拓扑表：权限拓扑（支持多租户）
+// ============================================
+model VisTopology {
+  id          String   @id @default(uuid())
+  tenantId    String   @map("tenant_id") @db.VarChar(50)  // 租户 ID
+  env         String?  @default("prod") @db.VarChar(20)   // 环境标识
+  name        String   @db.VarChar(100)
+  description String?
+  version     Int      @default(1)  // 版本号，用于乐观锁
+  status      String   @default("draft") @db.VarChar(20)  // draft/published/archived
+  nodes       VisNode[]
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, env, name])  // 租户内名称唯一
+  @@index([tenantId, env, status])
+  @@map("vis_topology")
+}
+
+// ============================================
+// 系统表：拓扑快照（支持多租户，用于回滚）
+// ============================================
+model VisSnapshot {
+  id         String   @id @default(uuid())
+  tenantId   String   @map("tenant_id") @db.VarChar(50)  // 租户 ID
+  topologyId String   @map("topology_id") @db.VarChar(100)
+  version    Int      // 快照版本号
+  snapshot   Json     // 完整拓扑快照 {nodes, edges}
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@unique([tenantId, topologyId, version])
+  @@index([tenantId, topologyId])
+  @@map("vis_snapshot")
+}
+
+// ============================================
+// 系统表：审计日志（支持多租户，WORM 特性）
+// ============================================
+model VisAuditLog {
+  id         String   @id @default(uuid())
+  tenantId   String   @map("tenant_id") @db.VarChar(50)  // 租户 ID
+  action     String   @db.VarChar(50)   // CREATE/UPDATE/DELETE/ROLLBACK/PUBLISH
+  resource   String   @db.VarChar(100)  // 操作资源类型
+  resourceId String?  @map("resource_id") @db.VarChar(100)
+  userId     String   @map("user_id") @db.VarChar(100)
+  details    Json?    // 操作详情（前后对比）
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, action])
+  @@index([tenantId, resource])
+  @@map("vis_audit_log")
 }
