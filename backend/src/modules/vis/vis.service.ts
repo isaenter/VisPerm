@@ -36,6 +36,7 @@ export class VisService {
   async createNode(dto: CreateNodeDto) {
     return this.prisma.visNode.create({
       data: {
+        tenantId: dto.tenantId,
         type: dto.type,
         name: dto.name,
         code: dto.code,
@@ -91,6 +92,7 @@ export class VisService {
 
     return this.prisma.visEdge.create({
       data: {
+        tenantId: dto.tenantId,
         sourceNodeId: dto.sourceNodeId,
         targetNodeId: dto.targetNodeId,
         type: dto.type,

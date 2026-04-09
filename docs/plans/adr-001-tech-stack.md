@@ -7,7 +7,6 @@
 | ADR 编号 | ADR-001 |
 | 创建日期 | 2026/04/09 |
 | 状态 | 已批准 |
-| 评审模式 | Deliberate Mode |
 
 ---
 
@@ -112,6 +111,7 @@
 
 ## 参考文献
 
-- [VisPerm 项目立项书 V1.0](../../docs/project-charter-v1.0.md)
+- [VisPerm 项目立项书 V1.0](../project-charter-v1.0.md)
 - [VisPerm MVP 实施计划 V1.1](./visperm-mvp-plan-v1.1.md)
-- [缓存与降级设计](./caching-fallback-design.md)
+- [缓存与降级设计](../architecture/caching-fallback-design.md)
+- [权限裁决语义](../architecture/permission-adjudication.md)

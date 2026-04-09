@@ -7,6 +7,10 @@ import { EdgeType } from '@prisma/client';
 export class CreateEdgeDto {
   @IsNotEmpty()
   @IsString()
+  tenantId: string;  // 租户 ID
+
+  @IsNotEmpty()
+  @IsString()
   sourceNodeId: string;
 
   @IsNotEmpty()

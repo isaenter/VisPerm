@@ -26,6 +26,7 @@ export class IamService {
   async createRole(dto: CreateRoleDto) {
     return this.prisma.sysRole.create({
       data: {
+        tenantId: dto.tenantId,
         name: dto.name,
         code: dto.code,
         description: dto.description,
@@ -48,6 +49,7 @@ export class IamService {
   async assignRoleToUser(dto: AssignRoleToUserDto) {
     return this.prisma.sysUserRole.create({
       data: {
+        tenantId: dto.tenantId,
         userId: dto.userId,
         roleId: dto.roleId,
       },

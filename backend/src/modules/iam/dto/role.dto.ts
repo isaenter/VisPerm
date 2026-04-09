@@ -6,6 +6,10 @@ import { IsNotEmpty, IsString, IsOptional } from 'class-validator';
 export class CreateRoleDto {
   @IsNotEmpty()
   @IsString()
+  tenantId: string;  // 租户 ID
+
+  @IsNotEmpty()
+  @IsString()
   name: string;
 
   @IsNotEmpty()
@@ -21,6 +25,10 @@ export class CreateRoleDto {
  * 分配角色给用户 DTO
  */
 export class AssignRoleToUserDto {
+  @IsNotEmpty()
+  @IsString()
+  tenantId: string;  // 租户 ID
+
   @IsNotEmpty()
   @IsString()
   userId: string;

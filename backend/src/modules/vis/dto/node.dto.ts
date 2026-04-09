@@ -6,6 +6,10 @@ import { NodeType } from '@prisma/client';
  */
 export class CreateNodeDto {
   @IsNotEmpty()
+  @IsString()
+  tenantId: string;  // 租户 ID
+
+  @IsNotEmpty()
   @IsEnum(NodeType)
   type: NodeType;
 

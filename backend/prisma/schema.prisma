@@ -100,13 +100,16 @@ model SysResourceMeta {
 // 系统表：角色定义（支持多租户）
 // ============================================
 model SysRole {
-  id          String   @id @default(uuid())
-  tenantId    String   @map("tenant_id") @db.VarChar(50)  // 租户 ID
-  name        String   @db.VarChar(100)
-  code        String   @db.VarChar(100)
+  id          String          @id @default(uuid())
+  tenantId    String          @map("tenant_id") @db.VarChar(50)  // 租户 ID
+  name        String          @db.VarChar(100)
+  code        String          @db.VarChar(100)
   description String?
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+
+  // 关系：用户 - 角色关联
+  userRoles   SysUserRole[]
 
   @@unique([tenantId, code])  // 租户内 code 唯一
   @@index([tenantId])
@@ -121,6 +124,7 @@ model SysUserRole {
   tenantId  String   @map("tenant_id") @db.VarChar(50)  // 租户 ID
   userId    String   @map("user_id") @db.VarChar(100)
   roleId    String   @map("role_id") @db.VarChar(100)
+  role      SysRole  @relation(fields: [roleId], references: [id])
   createdAt DateTime @default(now()) @map("created_at")
 
   @@unique([tenantId, userId, roleId])
