@@ -1,0 +1,109 @@
+// VisPerm 核心数据模型
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// 节点类型枚举
+// ============================================
+enum NodeType {
+  RESOURCE  // 资源节点 - 数据实体
+  ROLE      // 角色节点 - 用户角色
+  FILTER    // 过滤器节点 - 数据范围规则
+  ADDON     // 增量包节点 - 额外权限
+}
+
+// ============================================
+// 连线类型枚举
+// ============================================
+enum EdgeType {
+  INHERITANCE  // 继承 - UNION 并集
+  NARROWING    // 收窄 - INTERSECTION 交集
+  EXTENSION    // 扩展 - APPEND 追加
+  DENY         // 排除 - EXCLUSION 排除
+}
+
+// ============================================
+// 核心表：拓扑节点
+// ============================================
+model VisNode {
+  id        String   @id @default(uuid())
+  type      NodeType
+  name      String   @db.VarChar(100)
+  code      String?  @unique @db.VarChar(100)  // 资源 Code 或角色 Code
+  positionX Int?
+  positionY Int?
+  config    Json?    // 节点特有配置
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // 关系：作为源节点或目标节点的连线
+  outgoingEdges VisEdge[] @relation("EdgeSource")
+  incomingEdges VisEdge[] @relation("EdgeTarget")
+
+  @@map("vis_node")
+}
+
+// ============================================
+// 核心表：拓扑连线
+// ============================================
+model VisEdge {
+  id           String    @id @default(uuid())
+  sourceNode   VisNode   @relation("EdgeSource", fields: [sourceNodeId], references: [id])
+  sourceNodeId String    @map("source_node_id")
+  targetNode   VisNode   @relation("EdgeTarget", fields: [targetNodeId], references: [id])
+  targetNodeId String    @map("target_node_id")
+  type         EdgeType
+  config       Json?     // 连线特有配置（如优先级）
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  @@unique([sourceNodeId, targetNodeId]) // 防止重边
+  @@map("vis_edge")
+}
+
+// ============================================
+// 系统表：资源元数据
+// ============================================
+model SysResourceMeta {
+  resourceCode String   @id @map("resource_code") @db.VarChar(100)
+  name         String   @db.VarChar(100)
+  fields       Json     // [{name, type, label}...]
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("sys_resource_meta")
+}
+
+// ============================================
+// 系统表：角色定义
+// ============================================
+model SysRole {
+  id          String   @id @default(uuid())
+  name        String   @db.VarChar(100)
+  code        String   @unique @db.VarChar(100)
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("sys_role")
+}
+
+// ============================================
+// 系统表：用户 - 角色关联
+// ============================================
+model SysUserRole {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id") @db.VarChar(100)
+  roleId    String   @map("role_id") @db.VarChar(100)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([userId, roleId])
+  @@map("sys_user_role")
+}
