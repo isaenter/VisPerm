@@ -211,4 +211,26 @@ describe('VisPerm E2E 测试 (AppController)', () => {
         });
     });
   });
+
+  // ==================== 租户守卫测试 ====================
+
+  describe('租户守卫 (TenantGuard)', () => {
+    it('缺少 x-tenant-id 请求头时应返回 401', async () => {
+      return request(app.getHttpServer())
+        .get('/vis/nodes')
+        .expect(401);
+    });
+
+    it('缺少 x-tenant-id 创建节点时应返回 401', async () => {
+      return request(app.getHttpServer())
+        .post('/vis/nodes')
+        .send({
+          tenantId: 'test-tenant',
+          type: 'RESOURCE',
+          name: '测试节点',
+          code: 'test_node',
+        })
+        .expect(401);
+    });
+  });
 });

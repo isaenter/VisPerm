@@ -6,7 +6,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
  * 用于在不修改数据库的情况下计算权限
  */
 export class SimulationRunDto {
-  @ApiPropertyOptional({ description: '角色 ID 集合' })
+  @ApiPropertyOptional({ description: '角色编码 (code) 集合' })
   @IsOptional()
   @IsArray()
   @IsString({ each: true })

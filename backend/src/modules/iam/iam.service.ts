@@ -7,6 +7,16 @@ import { CreateResourceMetaDto, UpdateResourceMetaDto } from './dto/resource-met
 import { VisService } from '../vis/vis.service';
 
 /**
+ * 权限查询结果接口
+ */
+export interface PermissionResult {
+  roleCode: string;
+  resources: string[];
+  filters: string[];
+  deniedResources: string[];
+}
+
+/**
  * IAM 权限服务
  */
 @Injectable()
@@ -110,7 +120,7 @@ export class IamService {
     const roles = await this.getUserRoles(userId, tenantId);
 
     // 2. 对每个角色，通过拓扑图计算权限（使用 role.code 作为角色编码）
-    const allPermissions: any[] = [];
+    const allPermissions: PermissionResult[] = [];
     for (const role of roles) {
       const perms = await this.visService.calculatePermissionsForRole(role.code, tenantId);
       allPermissions.push(perms);

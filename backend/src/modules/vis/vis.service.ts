@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CacheService } from '../cache/cache.service';
 import { AuditService } from '../audit/audit.service';
@@ -131,7 +131,7 @@ export class VisService {
     // 验证连线合法性
     const validation = await this.validateEdgeConnection(dto.sourceNodeId, dto.targetNodeId, dto.type, dto.tenantId);
     if (!validation.valid) {
-      throw new Error(validation.reason);
+      throw new BadRequestException(validation.reason);
     }
 
     const edge = await this.prisma.visEdge.create({
@@ -405,43 +405,52 @@ export class VisService {
 
   /**
    * 删除拓扑
-   * 同时删除关联的节点（级联删除）
+   * 使用事务确保原子性：同时删除关联的边、节点和拓扑本身
    * 修复：添加 tenantId 过滤，防止 IDOR 越权
    */
   async deleteTopology(id: string, tenantId: string) {
-    // 先获取拓扑以确认存在（必须包含租户过滤）
-    const topology = await this.prisma.visTopology.findUnique({
-      where: { id, tenantId },
-      include: { nodes: { select: { id: true } } },
-    });
-
-    if (!topology) {
-      throw new NotFoundException(`拓扑 ${id} 不存在`);
-    }
-
-    // 删除关联的连线（仅限当前租户）
-    if (topology.nodes.length > 0) {
-      const nodeIds = topology.nodes.map(n => n.id);
-      await this.prisma.visEdge.deleteMany({
-        where: {
-          tenantId,
-          OR: [
-            { sourceNodeId: { in: nodeIds } },
-            { targetNodeId: { in: nodeIds } },
-          ],
-        },
+    // 使用事务确保删除操作的原子性
+    const topology = await this.prisma.$transaction(async (tx) => {
+      // 先获取拓扑以确认存在（必须包含租户过滤）
+      const topo = await tx.visTopology.findUnique({
+        where: { id, tenantId },
+        include: { nodes: { select: { id: true } } },
       });
-    }
 
-    // 删除拓扑及其节点
-    const result = await this.prisma.visTopology.delete({
-      where: { id, tenantId },
+      if (!topo) {
+        throw new NotFoundException(`拓扑 ${id} 不存在`);
+      }
+
+      // 删除关联的连线（仅限当前租户）
+      if (topo.nodes.length > 0) {
+        const nodeIds = topo.nodes.map(n => n.id);
+        await tx.visEdge.deleteMany({
+          where: {
+            tenantId,
+            OR: [
+              { sourceNodeId: { in: nodeIds } },
+              { targetNodeId: { in: nodeIds } },
+            ],
+          },
+        });
+
+        // 删除拓扑下的所有节点
+        await tx.visNode.deleteMany({
+          where: { tenantId, topologyId: id },
+        });
+      }
+
+      // 删除拓扑本身
+      return tx.visTopology.delete({
+        where: { id, tenantId },
+      });
     });
+
     // 记录审计日志
-    this.auditService.logAction(tenantId, 'DELETE', 'topology', id, undefined, { name: topology.name, nodeCount: topology.nodes.length });
+    this.auditService.logAction(tenantId, 'DELETE', 'topology', id, undefined, { name: topology.name });
     // 拓扑变更时清除相关权限缓存
     this.cacheService.clearPattern('perm:*');
-    return result;
+    return topology;
   }
 
   /**
@@ -764,13 +773,13 @@ export class VisService {
 
     const errors: { sourceType: string; sourceId: string; error: string }[] = [];
 
-    // 1. 处理角色 ID 集合
-    for (const roleId of roleIds) {
+    // 1. 处理角色编码集合
+    for (const roleCode of roleIds) {
       try {
-        const permResult = await this.calculatePermissionsForRole(roleId, tenantId, targetEnv);
+        const permResult = await this.calculatePermissionsForRole(roleCode, tenantId, targetEnv);
         results.push({
           sourceType: 'role',
-          sourceId: roleId,
+          sourceId: roleCode,
           grantedResources: permResult.resources || [],
           deniedResources: permResult.deniedResources || [],
           filters: permResult.filters || [],
@@ -779,7 +788,7 @@ export class VisService {
       } catch (e) {
         errors.push({
           sourceType: 'role',
-          sourceId: roleId,
+          sourceId: roleCode,
           error: e instanceof Error ? e.message : String(e),
         });
       }

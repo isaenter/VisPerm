@@ -3,12 +3,13 @@ import {
   ExecutionContext,
   Injectable,
   CanActivate,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { Request } from 'express';
 
 /**
  * 租户上下文装饰器
- * 从请求头或查询参数中提取 tenantId
+ * 从请求头提取 tenantId
  *
  * 使用方式：
  * @Get('resource')
@@ -20,12 +21,8 @@ export const TenantId = createParamDecorator(
   (data: unknown, ctx: ExecutionContext): string => {
     const request = ctx.switchToHttp().getRequest<Request>();
 
-    // 优先级：header > query > body > default
-    const tenantId =
-      request.headers['x-tenant-id'] as string ||
-      request.query.tenantId as string ||
-      (request.body && request.body.tenantId) ||
-      'default';
+    // 从请求头提取 tenantId（由 TenantGuard 确保其存在）
+    const tenantId = request.headers['x-tenant-id'] as string;
 
     return tenantId;
   },
@@ -33,8 +30,8 @@ export const TenantId = createParamDecorator(
 
 /**
  * 租户验证守卫
- * 确保每个请求都包含有效的 tenantId
- * 生产环境应配置为拒绝缺少 tenantId 的请求
+ * 确保每个请求都包含有效的 tenantId 请求头
+ * 缺少 x-tenant-id 时将拒绝请求（401 Unauthorized）
  */
 @Injectable()
 export class TenantGuard implements CanActivate {
@@ -42,12 +39,9 @@ export class TenantGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<Request>();
     const tenantId = request.headers['x-tenant-id'] as string;
 
-    // 如果没有 tenantId，检查是否是公共端点
-    // 可以在这里添加更复杂的验证逻辑（如检查租户是否存在）
+    // 缺少租户 ID 时拒绝请求，禁止静默降级到默认租户
     if (!tenantId) {
-      // 允许 default 租户用于开发环境
-      // 生产环境应该拒绝
-      return true;
+      throw new UnauthorizedException('缺少必需的 x-tenant-id 请求头');
     }
 
     return true;
