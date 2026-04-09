@@ -115,3 +115,38 @@ export const batchDeleteNodes = (ids: string[]) => {
 export const batchDeleteEdges = (ids: string[]) => {
   return apiClient.post('/vis/edges/batch-delete', { ids });
 };
+
+// ==================== Snapshot 快照相关 ====================
+
+/** 快照记录 */
+export interface Snapshot {
+  id: string;
+  tenantId: string;
+  nodes: VisNode[];
+  edges: VisEdge[];
+  version: number;
+  description?: string;
+  createdAt: string;
+}
+
+/**
+ * 获取快照列表
+ */
+export const getSnapshots = () => {
+  return apiClient.get<Snapshot[]>('/snapshots');
+};
+
+/**
+ * 创建快照
+ */
+export const createSnapshot = (data: { description?: string }) => {
+  return apiClient.post<Snapshot>('/snapshots', data);
+};
+
+/**
+ * 回滚到指定快照
+ */
+export const rollbackSnapshot = (id: string) => {
+  return apiClient.post(`/snapshots/${id}/rollback`);
+};
+

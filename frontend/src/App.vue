@@ -3,7 +3,7 @@
 </template>
 
 <script setup lang="ts">
-// 根组件
+// 根组件 - 由 MainLayout 提供全局布局
 </script>
 
 <style>
