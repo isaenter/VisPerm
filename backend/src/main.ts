@@ -26,8 +26,10 @@ async function bootstrap() {
     .setTitle('VisPerm API')
     .setDescription('可视化权限拓扑编排系统 API 文档')
     .setVersion('0.1')
-    .addTag('visperm', '拓扑编排')
-    .addTag('iam', '权限管理')
+    .addTag('可视化拓扑', '画布节点和连线的 CRUD 操作')
+    .addTag('拓扑管理', '权限拓扑图的创建、查询、更新、删除和发布')
+    .addTag('IAM 权限管理', '角色、用户角色分配和资源元数据管理')
+    .addTag('资源元数据', '资源字段定义和元数据信息管理')
     .build();
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api-docs', app, document);

@@ -118,7 +118,8 @@ export class IamService {
         tenantId: dto.tenantId,
         resourceCode: dto.resourceCode,
         name: dto.name,
-        fields: dto.fields,
+        // 将 DTO 数组转换为纯 JSON 对象以兼容 Prisma
+        fields: dto.fields.map(f => ({ name: f.name, type: f.type, label: f.label })) as any,
       },
     });
   }
@@ -139,7 +140,8 @@ export class IamService {
       where: { tenantId_resourceCode: { tenantId, resourceCode } },
       data: {
         name: dto.name ?? undefined,
-        fields: dto.fields ?? undefined,
+        // 将 DTO 数组转换为纯 JSON 对象以兼容 Prisma
+        fields: dto.fields ? (dto.fields.map(f => ({ name: f.name, type: f.type, label: f.label })) as any) : undefined,
       },
     });
   }
