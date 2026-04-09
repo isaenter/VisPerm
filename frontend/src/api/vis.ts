@@ -94,3 +94,24 @@ export const calculatePermissions = (roleId: string) => {
 export const validateGraph = (nodes: VisNode[], edges: VisEdge[]) => {
   return apiClient.post('/vis/graph/validate', { nodes, edges });
 };
+
+/**
+ * 批量保存画布数据（节点 + 连线）
+ */
+export const saveGraph = (data: { nodes: Partial<VisNode>[]; edges: Partial<VisEdge>[] }) => {
+  return apiClient.post('/vis/graph/save', data);
+};
+
+/**
+ * 批量删除节点
+ */
+export const batchDeleteNodes = (ids: string[]) => {
+  return apiClient.post('/vis/nodes/batch-delete', { ids });
+};
+
+/**
+ * 批量删除连线
+ */
+export const batchDeleteEdges = (ids: string[]) => {
+  return apiClient.post('/vis/edges/batch-delete', { ids });
+};
