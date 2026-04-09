@@ -213,7 +213,7 @@ import {
   InfoFilled,
   Close,
 } from '@element-plus/icons-vue';
-import LogicFlow from '@logicflow/core';
+import LogicFlow, { RectNode, RectNodeModel } from '@logicflow/core';
 import '@logicflow/core/dist/style/index.css';
 import {
   getNodes,
@@ -303,8 +303,15 @@ const registerCustomNodes = () => {
   if (!lf) return;
 
   allNodeTypes.forEach((nt) => {
-    // 为每种节点类型创建自定义 View
-    class CustomNodeView extends (lf as any).rectView {
+    // 定义自定义 Model
+    class CustomNodeModel extends RectNodeModel {
+      constructor(data: any, graphModel: any) {
+        super(data, graphModel);
+      }
+    }
+
+    // 定义自定义 View
+    class CustomNodeView extends RectNode {
       /**
        * 获取节点样式
        */
@@ -333,7 +340,7 @@ const registerCustomNodes = () => {
     lf.register({
       type: nt.type,
       view: CustomNodeView,
-      model: (lf as any).rectModel,
+      model: CustomNodeModel,
     });
   });
 };
@@ -505,15 +512,17 @@ const onDrop = async (event: DragEvent) => {
 
   const config = nodeConfigMap[nodeType];
 
+  // 定义节点数据（在 try 外部，以便 catch 块也能访问）
+  const newNode: Partial<VisNode> = {
+    tenantId: 'default-tenant', // 提供默认租户 ID
+    type: nodeType.replace('-node', '').toUpperCase() as any,
+    name: nodeLabel || config?.label || '新节点',
+    positionX: x,
+    positionY: y,
+  };
+
   try {
     // 创建节点到后端
-    const newNode: Partial<VisNode> = {
-      type: nodeType.replace('-node', '').toUpperCase() as any,
-      name: nodeLabel || config?.label || '新节点',
-      positionX: x,
-      positionY: y,
-    };
-
     const createdNode = await createNode(newNode);
     const nodeId = createdNode.id || `node_${Date.now()}`;
 
@@ -724,6 +733,9 @@ const handleDeleteEdge = async () => {
 const saving = ref(false);
 const status = ref<CanvasStatus>('loading');
 
+/** 保存锁：防止重复提交导致竞态条件 */
+const isSaving = ref(false);
+
 const statusText = computed(() => {
   const map: Record<CanvasStatus, string> = {
     ready: '就绪',
@@ -809,10 +821,18 @@ const loadGraphData = async () => {
 
 /**
  * 保存画布数据到后端
+ * 修复：增加 isSaving 锁防止重复提交竞态
  */
 const handleSave = async () => {
   if (!lf) return;
 
+  // 防止重复提交：如果正在保存中，直接返回
+  if (isSaving.value) {
+    ElMessage.warning('正在保存中，请勿重复操作');
+    return;
+  }
+
+  isSaving.value = true;
   saving.value = true;
   status.value = 'saving';
 
@@ -878,6 +898,8 @@ const handleSave = async () => {
     status.value = 'error';
     ElMessage.error('保存失败');
   } finally {
+    // 释放保存锁
+    isSaving.value = false;
     saving.value = false;
   }
 };

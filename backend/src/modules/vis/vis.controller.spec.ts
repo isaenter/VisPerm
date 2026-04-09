@@ -108,7 +108,7 @@ describe('VisController', () => {
       const result = await controller.updateNode('1', dto, 't1');
 
       expect(result).toEqual(mockNode);
-      expect(service.updateNode).toHaveBeenCalledWith('1', dto);
+      expect(service.updateNode).toHaveBeenCalledWith('1', dto, 't1');
     });
   });
 
@@ -116,10 +116,10 @@ describe('VisController', () => {
     it('应该删除节点并返回结果', async () => {
       mockVisService.deleteNode.mockResolvedValue({ id: '1' });
 
-      const result = await controller.deleteNode('1');
+      const result = await controller.deleteNode('1', 't1');
 
       expect(result).toEqual({ id: '1' });
-      expect(service.deleteNode).toHaveBeenCalledWith('1');
+      expect(service.deleteNode).toHaveBeenCalledWith('1', 't1');
     });
   });
 
@@ -163,10 +163,10 @@ describe('VisController', () => {
       const mockEdge = { id: '1', ...dto };
       mockVisService.updateEdge.mockResolvedValue(mockEdge);
 
-      const result = await controller.updateEdge('1', dto);
+      const result = await controller.updateEdge('1', dto, 't1');
 
       expect(result).toEqual(mockEdge);
-      expect(service.updateEdge).toHaveBeenCalledWith('1', dto);
+      expect(service.updateEdge).toHaveBeenCalledWith('1', dto, 't1');
     });
   });
 
@@ -174,10 +174,10 @@ describe('VisController', () => {
     it('应该删除连线并返回结果', async () => {
       mockVisService.deleteEdge.mockResolvedValue({ id: '1' });
 
-      const result = await controller.deleteEdge('1');
+      const result = await controller.deleteEdge('1', 't1');
 
       expect(result).toEqual({ id: '1' });
-      expect(service.deleteEdge).toHaveBeenCalledWith('1');
+      expect(service.deleteEdge).toHaveBeenCalledWith('1', 't1');
     });
   });
 

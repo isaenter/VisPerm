@@ -67,8 +67,8 @@ export class TopologyController {
   @ApiBody({ type: UpdateTopologyDto })
   @ApiResponse({ status: 200, description: '拓扑更新成功' })
   @ApiResponse({ status: 404, description: '拓扑不存在' })
-  async updateTopology(@Param('id') id: string, @Body() dto: UpdateTopologyDto) {
-    return this.visService.updateTopology(id, dto);
+  async updateTopology(@Param('id') id: string, @Body() dto: UpdateTopologyDto, @TenantId() tenantId: string) {
+    return this.visService.updateTopology(id, dto, tenantId);
   }
 
   @Delete(':id')
@@ -76,8 +76,8 @@ export class TopologyController {
   @ApiParam({ name: 'id', description: '拓扑 ID' })
   @ApiResponse({ status: 200, description: '拓扑删除成功' })
   @ApiResponse({ status: 404, description: '拓扑不存在' })
-  async deleteTopology(@Param('id') id: string) {
-    return this.visService.deleteTopology(id);
+  async deleteTopology(@Param('id') id: string, @TenantId() tenantId: string) {
+    return this.visService.deleteTopology(id, tenantId);
   }
 
   @Post(':id/publish')
@@ -86,7 +86,7 @@ export class TopologyController {
   @ApiBody({ type: PublishTopologyDto })
   @ApiResponse({ status: 200, description: '拓扑发布成功' })
   @ApiResponse({ status: 404, description: '拓扑不存在或版本号不匹配' })
-  async publishTopology(@Param('id') id: string, @Body() dto: PublishTopologyDto) {
-    return this.visService.publishTopology(id, dto.version);
+  async publishTopology(@Param('id') id: string, @Body() dto: PublishTopologyDto, @TenantId() tenantId: string) {
+    return this.visService.publishTopology(id, dto.version, tenantId);
   }
 }

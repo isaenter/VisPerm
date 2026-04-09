@@ -8,14 +8,14 @@
         </div>
       </template>
 
-      <el-table :data="roles" style="width: 100%">
+      <el-table :data="roles" style="width: 100%" v-loading="loading">
         <el-table-column prop="name" label="角色名称" />
         <el-table-column prop="code" label="角色编码" />
         <el-table-column prop="description" label="描述" />
         <el-table-column label="操作" width="200">
           <template #default="{ row }">
             <el-button size="small" @click="editRole(row)">编辑</el-button>
-            <el-button size="small" type="danger" @click="deleteRole(row)">删除</el-button>
+            <el-button size="small" type="danger" @click="handleDeleteRole(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -36,7 +36,7 @@
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitForm">确定</el-button>
+        <el-button type="primary" @click="submitForm" :loading="submitting">确定</el-button>
       </template>
     </el-dialog>
   </div>
@@ -44,7 +44,8 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
+import { getRoles, createRole, updateRole, deleteRole } from '@/api/iam';
 
 interface Role {
   id: string;
@@ -54,44 +55,88 @@ interface Role {
 }
 
 const roles = ref<Role[]>([]);
+const loading = ref(false);
+const submitting = ref(false);
 const dialogVisible = ref(false);
 const dialogTitle = ref('新建角色');
+const editingId = ref<string | null>(null);
 const form = ref({
   name: '',
   code: '',
   description: '',
 });
 
+/**
+ * 调用真实 API 加载角色列表
+ */
 const loadRoles = async () => {
-  // TODO: 调用 API 加载角色列表
-  roles.value = [
-    { id: '1', name: '系统管理员', code: 'admin', description: '系统超级管理员' },
-    { id: '2', name: '部门经理', code: 'dept_manager', description: '部门管理者' },
-    { id: '3', name: '普通员工', code: 'employee', description: '普通员工' },
-  ];
+  loading.value = true;
+  try {
+    roles.value = await getRoles();
+  } catch (error) {
+    console.error('加载角色列表失败:', error);
+  } finally {
+    loading.value = false;
+  }
 };
 
 const showCreateDialog = () => {
   dialogTitle.value = '新建角色';
+  editingId.value = null;
   form.value = { name: '', code: '', description: '' };
   dialogVisible.value = true;
 };
 
 const editRole = (row: Role) => {
   dialogTitle.value = '编辑角色';
-  form.value = { ...row };
+  editingId.value = row.id;
+  form.value = { name: row.name, code: row.code, description: row.description || '' };
   dialogVisible.value = true;
 };
 
-const deleteRole = (row: Role) => {
-  console.log('删除角色:', row);
-  ElMessage.info('删除功能开发中...');
+/**
+ * 删除角色 - 调用真实 API
+ */
+const handleDeleteRole = async (row: Role) => {
+  try {
+    await ElMessageBox.confirm(`确定要删除角色「${row.name}」吗？`, '确认删除', {
+      type: 'warning',
+    });
+    await deleteRole(row.id);
+    ElMessage.success('角色已删除');
+    await loadRoles();
+  } catch (error: any) {
+    if (error !== 'cancel') {
+      console.error('删除角色失败:', error);
+    }
+  }
 };
 
-const submitForm = () => {
-  console.log('提交表单:', form.value);
-  dialogVisible.value = false;
-  loadRoles();
+/**
+ * 提交表单 - 调用真实 API 创建或更新角色
+ */
+const submitForm = async () => {
+  if (!form.value.name || !form.value.code) {
+    ElMessage.warning('请填写角色名称和编码');
+    return;
+  }
+
+  submitting.value = true;
+  try {
+    if (editingId.value) {
+      await updateRole(editingId.value, { ...form.value });
+      ElMessage.success('角色已更新');
+    } else {
+      await createRole({ ...form.value });
+      ElMessage.success('角色已创建');
+    }
+    dialogVisible.value = false;
+    await loadRoles();
+  } catch (error) {
+    console.error('提交角色表单失败:', error);
+  } finally {
+    submitting.value = false;
+  }
 };
 
 onMounted(() => {

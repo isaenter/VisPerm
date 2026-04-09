@@ -71,7 +71,7 @@ export class VisController {
   @ApiResponse({ status: 200, description: '节点更新成功' })
   @ApiResponse({ status: 404, description: '节点不存在' })
   async updateNode(@Param('id') id: string, @Body() dto: UpdateNodeDto, @TenantId() tenantId: string) {
-    return this.visService.updateNode(id, dto);
+    return this.visService.updateNode(id, dto, tenantId);
   }
 
   @Delete('nodes/:id')
@@ -79,8 +79,8 @@ export class VisController {
   @ApiParam({ name: 'id', description: '节点 ID' })
   @ApiResponse({ status: 200, description: '节点删除成功' })
   @ApiResponse({ status: 404, description: '节点不存在' })
-  async deleteNode(@Param('id') id: string) {
-    return this.visService.deleteNode(id);
+  async deleteNode(@Param('id') id: string, @TenantId() tenantId: string) {
+    return this.visService.deleteNode(id, tenantId);
   }
 
   // ==================== 连线管理 ====================
@@ -107,8 +107,8 @@ export class VisController {
   @ApiBody({ type: UpdateEdgeDto })
   @ApiResponse({ status: 200, description: '连线更新成功' })
   @ApiResponse({ status: 404, description: '连线不存在' })
-  async updateEdge(@Param('id') id: string, @Body() dto: UpdateEdgeDto) {
-    return this.visService.updateEdge(id, dto);
+  async updateEdge(@Param('id') id: string, @Body() dto: UpdateEdgeDto, @TenantId() tenantId: string) {
+    return this.visService.updateEdge(id, dto, tenantId);
   }
 
   @Delete('edges/:id')
@@ -116,8 +116,8 @@ export class VisController {
   @ApiParam({ name: 'id', description: '连线 ID' })
   @ApiResponse({ status: 200, description: '连线删除成功' })
   @ApiResponse({ status: 404, description: '连线不存在' })
-  async deleteEdge(@Param('id') id: string) {
-    return this.visService.deleteEdge(id);
+  async deleteEdge(@Param('id') id: string, @TenantId() tenantId: string) {
+    return this.visService.deleteEdge(id, tenantId);
   }
 
   // ==================== 拓扑图操作 ====================

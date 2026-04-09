@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateNodeDto, UpdateNodeDto } from './dto/node.dto';
 import { CreateEdgeDto, UpdateEdgeDto } from './dto/edge.dto';
@@ -11,6 +11,9 @@ import { SimulationRunDto } from './dto/simulation.dto';
  */
 @Injectable()
 export class VisService {
+  // 添加日志记录器，用于记录异常
+  private readonly logger = new Logger(VisService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   // ==================== 节点 CRUD ====================
@@ -50,9 +53,13 @@ export class VisService {
     });
   }
 
-  async updateNode(id: string, dto: UpdateNodeDto) {
+  /**
+   * 更新节点
+   * 修复：添加 tenantId 过滤，防止 IDOR 越权
+   */
+  async updateNode(id: string, dto: UpdateNodeDto, tenantId: string) {
     return this.prisma.visNode.update({
-      where: { id },
+      where: { id, tenantId },
       data: {
         name: dto.name,
         positionX: dto.positionX,
@@ -62,15 +69,20 @@ export class VisService {
     });
   }
 
-  async deleteNode(id: string) {
-    // 先删除关联的连线
+  /**
+   * 删除节点
+   * 修复：添加 tenantId 过滤，防止 IDOR 越权
+   */
+  async deleteNode(id: string, tenantId: string) {
+    // 先删除关联的连线（仅限当前租户）
     await this.prisma.visEdge.deleteMany({
       where: {
+        tenantId,
         OR: [{ sourceNodeId: id }, { targetNodeId: id }],
       },
     });
     return this.prisma.visNode.delete({
-      where: { id },
+      where: { id, tenantId },
     });
   }
 
@@ -89,7 +101,7 @@ export class VisService {
 
   async createEdge(dto: CreateEdgeDto) {
     // 验证连线合法性
-    const validation = await this.validateEdgeConnection(dto.sourceNodeId, dto.targetNodeId, dto.type);
+    const validation = await this.validateEdgeConnection(dto.sourceNodeId, dto.targetNodeId, dto.type, dto.tenantId);
     if (!validation.valid) {
       throw new Error(validation.reason);
     }
@@ -109,9 +121,13 @@ export class VisService {
     });
   }
 
-  async updateEdge(id: string, dto: UpdateEdgeDto) {
+  /**
+   * 更新连线
+   * 修复：添加 tenantId 过滤，防止 IDOR 越权
+   */
+  async updateEdge(id: string, dto: UpdateEdgeDto, tenantId: string) {
     return this.prisma.visEdge.update({
-      where: { id },
+      where: { id, tenantId },
       data: {
         type: dto.type,
         config: dto.config,
@@ -123,9 +139,13 @@ export class VisService {
     });
   }
 
-  async deleteEdge(id: string) {
+  /**
+   * 删除连线
+   * 修复：添加 tenantId 过滤，防止 IDOR 越权
+   */
+  async deleteEdge(id: string, tenantId: string) {
     return this.prisma.visEdge.delete({
-      where: { id },
+      where: { id, tenantId },
     });
   }
 
@@ -137,20 +157,32 @@ export class VisService {
    * - RESOURCE -> FILTER -> ROLE (数据流向)
    * - ADDON -> ROLE (增量包只能连向角色)
    * - 禁止 ROLE -> RESOURCE 等反向连接
+   * 
+   * 修复：添加 tenantId 参数，验证源节点和目标节点属于同一租户
    */
   async validateEdgeConnection(
     sourceId: string,
     targetId: string,
     edgeType: string,
+    tenantId?: string,
   ): Promise<{ valid: boolean; reason?: string }> {
+    // 构建查询条件：如果提供了 tenantId，则加入过滤
+    const whereClause = tenantId ? { id: sourceId, tenantId } : { id: sourceId };
+    const targetWhereClause = tenantId ? { id: targetId, tenantId } : { id: targetId };
+
     // 查询源节点和目标节点
     const [sourceNode, targetNode] = await Promise.all([
-      this.prisma.visNode.findUnique({ where: { id: sourceId }, select: { type: true } }),
-      this.prisma.visNode.findUnique({ where: { id: targetId }, select: { type: true } }),
+      this.prisma.visNode.findUnique({ where: whereClause, select: { type: true, tenantId: true } }),
+      this.prisma.visNode.findUnique({ where: targetWhereClause, select: { type: true, tenantId: true } }),
     ]);
 
     if (!sourceNode || !targetNode) {
       return { valid: false, reason: '源节点或目标节点不存在' };
+    }
+
+    // 修复：验证源节点和目标节点属于同一租户（防止跨租户连线）
+    if (sourceNode.tenantId !== targetNode.tenantId) {
+      return { valid: false, reason: '源节点和目标节点不属于同一租户，禁止跨租户连线' };
     }
 
     const sourceType = sourceNode.type;
@@ -172,9 +204,10 @@ export class VisService {
       };
     }
 
-    // 检查是否已存在重边
+    // 检查是否已存在重边（加入租户过滤）
     const existingEdge = await this.prisma.visEdge.findFirst({
       where: {
+        ...(tenantId ? { tenantId } : {}),
         sourceNodeId: sourceId,
         targetNodeId: targetId,
       },
@@ -302,12 +335,14 @@ export class VisService {
   /**
    * 更新拓扑
    * 使用乐观锁机制（version 字段）防止并发覆盖
+   * 修复：添加 tenantId 过滤
    */
-  async updateTopology(id: string, dto: UpdateTopologyDto) {
+  async updateTopology(id: string, dto: UpdateTopologyDto, tenantId: string) {
     const { version, ...updateData } = dto;
     return this.prisma.visTopology.update({
       where: {
         id,
+        tenantId,
         ...(version ? { version } : {}),
       },
       data: updateData,
@@ -317,11 +352,12 @@ export class VisService {
   /**
    * 删除拓扑
    * 同时删除关联的节点（级联删除）
+   * 修复：添加 tenantId 过滤，防止 IDOR 越权
    */
-  async deleteTopology(id: string) {
-    // 先获取拓扑以确认存在
+  async deleteTopology(id: string, tenantId: string) {
+    // 先获取拓扑以确认存在（必须包含租户过滤）
     const topology = await this.prisma.visTopology.findUnique({
-      where: { id },
+      where: { id, tenantId },
       include: { nodes: { select: { id: true } } },
     });
 
@@ -329,11 +365,12 @@ export class VisService {
       throw new NotFoundException(`拓扑 ${id} 不存在`);
     }
 
-    // 删除关联的连线
+    // 删除关联的连线（仅限当前租户）
     if (topology.nodes.length > 0) {
       const nodeIds = topology.nodes.map(n => n.id);
       await this.prisma.visEdge.deleteMany({
         where: {
+          tenantId,
           OR: [
             { sourceNodeId: { in: nodeIds } },
             { targetNodeId: { in: nodeIds } },
@@ -344,17 +381,18 @@ export class VisService {
 
     // 删除拓扑及其节点
     return this.prisma.visTopology.delete({
-      where: { id },
+      where: { id, tenantId },
     });
   }
 
   /**
    * 发布拓扑
    * 将状态更新为 published，并递增版本号
+   * 修复：添加 tenantId 过滤
    */
-  async publishTopology(id: string, version: number) {
+  async publishTopology(id: string, version: number, tenantId: string) {
     return this.prisma.visTopology.update({
-      where: { id, version },
+      where: { id, version, tenantId },
       data: {
         status: 'published',
         version: { increment: 1 },
@@ -375,7 +413,7 @@ export class VisService {
    * - DENY (排除): 权限剔除 (EXCLUSION) - 从最终结果中剔除被排除的资源
    */
   async calculatePermissionsForRole(roleId: string, tenantId: string, env?: string) {
-    // 1. 找到角色节点
+    // 1. 找到角色节点（已有 tenantId 过滤）
     const roleNode = await this.prisma.visNode.findFirst({
       where: { code: roleId, tenantId, type: 'ROLE', ...(env ? { env } : {}) },
     });
@@ -409,6 +447,7 @@ export class VisService {
   /**
    * 增强版 DFS 遍历：按 EdgeType 分类收集资源和过滤器
    * 返回分类后的原始数据，供后续合并使用
+   * 修复：所有数据库查询都包含 tenantId 过滤，防止越权
    */
   private async dfsCalculatePermissions(startNodeId: string, tenantId: string) {
     const visited = new Set<string>();
@@ -432,10 +471,12 @@ export class VisService {
       if (visited.has(nodeId)) return;
       visited.add(nodeId);
 
+      // 修复：查询节点时必须加入 tenantId 过滤
       const node = await this.prisma.visNode.findUnique({
-        where: { id: nodeId },
+        where: { id: nodeId, tenantId },
         include: {
           incomingEdges: {
+            where: { tenantId }, // 修复：查询入边时也必须加入 tenantId 过滤
             include: { sourceNode: true },
           },
         },
