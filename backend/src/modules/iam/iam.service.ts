@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { CacheService } from '../cache/cache.service';
+import { AuditService } from '../audit/audit.service';
 import { CreateRoleDto, AssignRoleToUserDto } from './dto/role.dto';
 import { CreateResourceMetaDto, UpdateResourceMetaDto } from './dto/resource-meta.dto';
 import { VisService } from '../vis/vis.service';
@@ -12,6 +14,8 @@ export class IamService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly visService: VisService,
+    private readonly cacheService: CacheService,
+    private readonly auditService: AuditService,
   ) {}
 
   // ==================== 角色管理 ====================
@@ -30,7 +34,7 @@ export class IamService {
   }
 
   async createRole(dto: CreateRoleDto) {
-    return this.prisma.sysRole.create({
+    const role = await this.prisma.sysRole.create({
       data: {
         tenantId: dto.tenantId,
         name: dto.name,
@@ -38,6 +42,9 @@ export class IamService {
         description: dto.description,
       },
     });
+    // 记录审计日志
+    this.auditService.logAction(dto.tenantId, 'CREATE', 'role', role.id, undefined, { name: role.name, code: role.code });
+    return role;
   }
 
   // ==================== 用户角色管理 ====================
@@ -53,13 +60,18 @@ export class IamService {
   }
 
   async assignRoleToUser(dto: AssignRoleToUserDto) {
-    return this.prisma.sysUserRole.create({
+    const userRole = await this.prisma.sysUserRole.create({
       data: {
         tenantId: dto.tenantId,
         userId: dto.userId,
         roleId: dto.roleId,
       },
     });
+    // 记录审计日志
+    this.auditService.logAction(dto.tenantId, 'CREATE', 'user-role', userRole.id, dto.userId, { roleId: dto.roleId });
+    // 用户角色变更时清除相关权限缓存
+    this.cacheService.clearPattern('perm:*');
+    return userRole;
   }
 
   // ==================== 权限查询 ====================
@@ -158,8 +170,88 @@ export class IamService {
       throw new NotFoundException(`资源元数据 ${resourceCode} 不存在`);
     }
 
-    return this.prisma.sysResourceMeta.delete({
+    const result = await this.prisma.sysResourceMeta.delete({
       where: { tenantId_resourceCode: { tenantId, resourceCode } },
+    });
+    // 记录审计日志
+    this.auditService.logAction(tenantId, 'DELETE', 'resource-meta', resourceCode, undefined, { resourceCode });
+    return result;
+  }
+
+  // ==================== 用户角色管理扩展 ====================
+
+  /**
+   * 查询用户角色关联列表（支持按租户过滤）
+   */
+  async findAllUserRoles(tenantId: string) {
+    return this.prisma.sysUserRole.findMany({
+      where: { tenantId },
+      include: { role: true },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * 批量分配角色给用户
+   */
+  async batchAssignRoles(dto: { userId: string; roleIds: string[]; tenantId: string }) {
+    const results: any[] = [];
+    for (const roleId of dto.roleIds) {
+      try {
+        const userRole = await this.prisma.sysUserRole.create({
+          data: {
+            tenantId: dto.tenantId,
+            userId: dto.userId,
+            roleId,
+          },
+          include: { role: true },
+        });
+        results.push(userRole);
+        // 记录审计日志
+        this.auditService.logAction(dto.tenantId, 'CREATE', 'user-role', userRole.id, dto.userId, { roleId });
+      } catch (error) {
+        // 跳过已存在的关联
+        if ((error as any).code === 'P2002') {
+          continue;
+        }
+        throw error;
+      }
+    }
+    // 批量分配后清除相关权限缓存
+    this.cacheService.clearPattern('perm:*');
+    return results;
+  }
+
+  /**
+   * 移除用户角色
+   */
+  async removeUserRole(id: string, tenantId: string) {
+    const userRole = await this.prisma.sysUserRole.findUnique({
+      where: { id, tenantId },
+    });
+
+    if (!userRole) {
+      throw new NotFoundException(`用户角色关联 ${id} 不存在`);
+    }
+
+    const result = await this.prisma.sysUserRole.delete({
+      where: { id, tenantId },
+    });
+    // 记录审计日志
+    this.auditService.logAction(tenantId, 'DELETE', 'user-role', id, userRole.userId, { roleId: userRole.roleId });
+    // 用户角色变更时清除相关权限缓存
+    this.cacheService.clearPattern('perm:*');
+    return result;
+  }
+
+  /**
+   * 查询指定用户的角色（带角色详情）
+   */
+  async findUserRolesWithDetails(userId: string, tenantId: string) {
+    return this.prisma.sysUserRole.findMany({
+      where: { userId, tenantId },
+      include: { role: true },
+      orderBy: { createdAt: 'desc' },
     });
   }
 }

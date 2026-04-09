@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { CacheService } from '../cache/cache.service';
+import { AuditService } from '../audit/audit.service';
 import { CreateNodeDto, UpdateNodeDto } from './dto/node.dto';
 import { CreateEdgeDto, UpdateEdgeDto } from './dto/edge.dto';
 import { CreateTopologyDto, UpdateTopologyDto } from './dto/topology.dto';
@@ -14,7 +16,11 @@ export class VisService {
   // 添加日志记录器，用于记录异常
   private readonly logger = new Logger(VisService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cacheService: CacheService,
+    private readonly auditService: AuditService,
+  ) {}
 
   // ==================== 节点 CRUD ====================
 
@@ -40,7 +46,7 @@ export class VisService {
   }
 
   async createNode(dto: CreateNodeDto) {
-    return this.prisma.visNode.create({
+    const node = await this.prisma.visNode.create({
       data: {
         tenantId: dto.tenantId,
         type: dto.type,
@@ -51,6 +57,11 @@ export class VisService {
         config: dto.config ?? {},
       },
     });
+    // 记录审计日志
+    this.auditService.logAction(dto.tenantId, 'CREATE', 'node', node.id, undefined, { name: node.name, type: node.type });
+    // 节点变更时清除相关权限缓存
+    this.cacheService.clearPattern('perm:*');
+    return node;
   }
 
   /**
@@ -58,7 +69,7 @@ export class VisService {
    * 修复：添加 tenantId 过滤，防止 IDOR 越权
    */
   async updateNode(id: string, dto: UpdateNodeDto, tenantId: string) {
-    return this.prisma.visNode.update({
+    const node = await this.prisma.visNode.update({
       where: { id, tenantId },
       data: {
         name: dto.name,
@@ -67,6 +78,11 @@ export class VisService {
         config: dto.config,
       },
     });
+    // 记录审计日志
+    this.auditService.logAction(tenantId, 'UPDATE', 'node', id, undefined, { ...dto });
+    // 节点变更时清除相关权限缓存
+    this.cacheService.clearPattern('perm:*');
+    return node;
   }
 
   /**
@@ -74,6 +90,7 @@ export class VisService {
    * 修复：添加 tenantId 过滤，防止 IDOR 越权
    */
   async deleteNode(id: string, tenantId: string) {
+    const node = await this.prisma.visNode.findUnique({ where: { id, tenantId } });
     // 先删除关联的连线（仅限当前租户）
     await this.prisma.visEdge.deleteMany({
       where: {
@@ -81,9 +98,14 @@ export class VisService {
         OR: [{ sourceNodeId: id }, { targetNodeId: id }],
       },
     });
-    return this.prisma.visNode.delete({
+    const result = await this.prisma.visNode.delete({
       where: { id, tenantId },
     });
+    // 记录审计日志
+    this.auditService.logAction(tenantId, 'DELETE', 'node', id, undefined, { name: node?.name });
+    // 节点变更时清除相关权限缓存
+    this.cacheService.clearPattern('perm:*');
+    return result;
   }
 
   // ==================== 连线 CRUD ====================
@@ -106,7 +128,7 @@ export class VisService {
       throw new Error(validation.reason);
     }
 
-    return this.prisma.visEdge.create({
+    const edge = await this.prisma.visEdge.create({
       data: {
         tenantId: dto.tenantId,
         sourceNodeId: dto.sourceNodeId,
@@ -119,6 +141,11 @@ export class VisService {
         targetNode: true,
       },
     });
+    // 记录审计日志
+    this.auditService.logAction(dto.tenantId, 'CREATE', 'edge', edge.id, undefined, { type: edge.type });
+    // 边变更时清除相关权限缓存
+    this.cacheService.clearPattern('perm:*');
+    return edge;
   }
 
   /**
@@ -126,7 +153,7 @@ export class VisService {
    * 修复：添加 tenantId 过滤，防止 IDOR 越权
    */
   async updateEdge(id: string, dto: UpdateEdgeDto, tenantId: string) {
-    return this.prisma.visEdge.update({
+    const edge = await this.prisma.visEdge.update({
       where: { id, tenantId },
       data: {
         type: dto.type,
@@ -137,6 +164,11 @@ export class VisService {
         targetNode: true,
       },
     });
+    // 记录审计日志
+    this.auditService.logAction(tenantId, 'UPDATE', 'edge', id, undefined, { type: dto.type });
+    // 边变更时清除相关权限缓存
+    this.cacheService.clearPattern('perm:*');
+    return edge;
   }
 
   /**
@@ -144,9 +176,15 @@ export class VisService {
    * 修复：添加 tenantId 过滤，防止 IDOR 越权
    */
   async deleteEdge(id: string, tenantId: string) {
-    return this.prisma.visEdge.delete({
+    const edge = await this.prisma.visEdge.findUnique({ where: { id, tenantId } });
+    const result = await this.prisma.visEdge.delete({
       where: { id, tenantId },
     });
+    // 记录审计日志
+    this.auditService.logAction(tenantId, 'DELETE', 'edge', id, undefined, { type: edge?.type });
+    // 边变更时清除相关权限缓存
+    this.cacheService.clearPattern('perm:*');
+    return result;
   }
 
   // ==================== 拓扑验证 ====================
@@ -322,7 +360,7 @@ export class VisService {
    * 创建拓扑
    */
   async createTopology(dto: CreateTopologyDto) {
-    return this.prisma.visTopology.create({
+    const topology = await this.prisma.visTopology.create({
       data: {
         tenantId: dto.tenantId,
         name: dto.name,
@@ -330,6 +368,9 @@ export class VisService {
         env: dto.env ?? 'prod',
       },
     });
+    // 记录审计日志
+    this.auditService.logAction(dto.tenantId, 'CREATE', 'topology', topology.id, undefined, { name: topology.name });
+    return topology;
   }
 
   /**
@@ -339,7 +380,7 @@ export class VisService {
    */
   async updateTopology(id: string, dto: UpdateTopologyDto, tenantId: string) {
     const { version, ...updateData } = dto;
-    return this.prisma.visTopology.update({
+    const topology = await this.prisma.visTopology.update({
       where: {
         id,
         tenantId,
@@ -347,6 +388,9 @@ export class VisService {
       },
       data: updateData,
     });
+    // 记录审计日志
+    this.auditService.logAction(tenantId, 'UPDATE', 'topology', id, undefined, { ...updateData });
+    return topology;
   }
 
   /**
@@ -380,9 +424,14 @@ export class VisService {
     }
 
     // 删除拓扑及其节点
-    return this.prisma.visTopology.delete({
+    const result = await this.prisma.visTopology.delete({
       where: { id, tenantId },
     });
+    // 记录审计日志
+    this.auditService.logAction(tenantId, 'DELETE', 'topology', id, undefined, { name: topology.name, nodeCount: topology.nodes.length });
+    // 拓扑变更时清除相关权限缓存
+    this.cacheService.clearPattern('perm:*');
+    return result;
   }
 
   /**
@@ -391,13 +440,18 @@ export class VisService {
    * 修复：添加 tenantId 过滤
    */
   async publishTopology(id: string, version: number, tenantId: string) {
-    return this.prisma.visTopology.update({
+    const topology = await this.prisma.visTopology.update({
       where: { id, version, tenantId },
       data: {
         status: 'published',
         version: { increment: 1 },
       },
     });
+    // 记录审计日志
+    this.auditService.logAction(tenantId, 'PUBLISH', 'topology', id, undefined, { name: topology.name, version });
+    // 发布时清除相关权限缓存
+    this.cacheService.clearPattern('perm:*');
+    return topology;
   }
 
   // ==================== 权限计算 ====================
@@ -411,8 +465,21 @@ export class VisService {
    * - NARROWING (收窄): 权限交集 (INTERSECTION) - 仅保留同时存在于收窄路径和继承路径的资源
    * - EXTENSION (扩展): 权限追加 (APPEND) - 在已有权限基础上追加额外资源
    * - DENY (排除): 权限剔除 (EXCLUSION) - 从最终结果中剔除被排除的资源
+   * 
+   * 集成 Redis 缓存：key = `perm:{roleId}:{tenantId}`, TTL = 300s
    */
   async calculatePermissionsForRole(roleId: string, tenantId: string, env?: string) {
+    // 尝试从缓存读取
+    const cacheKey = `perm:${roleId}:${tenantId}`;
+    const cached = await this.cacheService.get(cacheKey);
+    if (cached) {
+      try {
+        return JSON.parse(cached);
+      } catch {
+        // 缓存解析失败，继续从数据库计算
+      }
+    }
+
     // 1. 找到角色节点（已有 tenantId 过滤）
     const roleNode = await this.prisma.visNode.findFirst({
       where: { code: roleId, tenantId, type: 'ROLE', ...(env ? { env } : {}) },
@@ -434,7 +501,7 @@ export class VisService {
     // 3. 根据 EdgeType 合并权限
     const mergedPermissions = this.mergePermissionsByEdgeType(result);
 
-    return {
+    const response = {
       roleId,
       resources: mergedPermissions.grantedResources,
       deniedResources: mergedPermissions.deniedResources,
@@ -442,6 +509,15 @@ export class VisService {
       paths: result.paths,
       message: '权限计算完成',
     };
+
+    // 将结果写入缓存（TTL 300s）
+    try {
+      await this.cacheService.set(cacheKey, JSON.stringify(response), 300);
+    } catch {
+      // 缓存写入失败不应阻断主流程
+    }
+
+    return response;
   }
 
   /**
@@ -768,6 +844,215 @@ export class VisService {
       results,
       errors,
       computedAt: new Date().toISOString(),
+    };
+  }
+
+  // ==================== 快照管理 ====================
+
+  /**
+   * 创建当前拓扑快照
+   * 序列化指定拓扑的所有节点和边为 JSON，保存为快照记录
+   */
+  async createSnapshot(topologyId: string, tenantId: string) {
+    // 验证拓扑存在
+    const topology = await this.prisma.visTopology.findUnique({
+      where: { id: topologyId, tenantId },
+    });
+    if (!topology) {
+      throw new NotFoundException(`拓扑 ${topologyId} 不存在`);
+    }
+
+    // 查询拓扑下所有节点和边
+    const [nodes, edges] = await Promise.all([
+      this.prisma.visNode.findMany({
+        where: { tenantId, topologyId },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.visEdge.findMany({
+        where: { tenantId },
+        include: {
+          sourceNode: { select: { id: true } },
+          targetNode: { select: { id: true } },
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
+
+    // 获取当前最大版本号
+    const latestSnapshot = await this.prisma.visSnapshot.findFirst({
+      where: { tenantId, topologyId },
+      orderBy: { version: 'desc' },
+    });
+    const nextVersion = (latestSnapshot?.version ?? 0) + 1;
+
+    // 序列化快照数据
+    const snapshotData = {
+      topology: {
+        id: topology.id,
+        name: topology.name,
+        description: topology.description,
+        env: topology.env,
+      },
+      nodes,
+      edges: edges.map(e => ({
+        id: e.id,
+        sourceNodeId: e.sourceNodeId,
+        targetNodeId: e.targetNodeId,
+        type: e.type,
+        config: e.config,
+      })),
+    };
+
+    const snapshot = await this.prisma.visSnapshot.create({
+      data: {
+        tenantId,
+        topologyId,
+        version: nextVersion,
+        snapshot: snapshotData as any,
+      },
+    });
+
+    // 记录审计日志
+    this.auditService.logAction(
+      tenantId,
+      'CREATE',
+      'snapshot',
+      snapshot.id,
+      undefined,
+      { topologyId, version: nextVersion, nodeCount: nodes.length, edgeCount: edges.length },
+    );
+
+    return {
+      ...snapshot,
+      snapshot: snapshotData,
+    };
+  }
+
+  /**
+   * 获取快照列表
+   */
+  async findAllSnapshots(tenantId: string) {
+    return this.prisma.visSnapshot.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * 获取快照详情
+   */
+  async findSnapshotById(id: string, tenantId: string) {
+    const snapshot = await this.prisma.visSnapshot.findUnique({
+      where: { id, tenantId },
+    });
+    if (!snapshot) return null;
+    return {
+      ...snapshot,
+      snapshot: snapshot.snapshot as any,
+    };
+  }
+
+  /**
+   * 回滚到指定快照
+   * 删除当前拓扑所有节点和边，恢复快照中的数据
+   */
+  async rollbackSnapshot(snapshotId: string, tenantId: string) {
+    const snapshot = await this.prisma.visSnapshot.findUnique({
+      where: { id: snapshotId, tenantId },
+    });
+    if (!snapshot) {
+      throw new NotFoundException(`快照 ${snapshotId} 不存在`);
+    }
+
+    const snapshotData = snapshot.snapshot as any;
+    const topologyId = snapshot.topologyId;
+
+    // 使用事务保证原子性
+    const result = await this.prisma.$transaction(async (tx) => {
+      // 1. 删除当前拓扑下所有节点的边
+      const currentNodes = await tx.visNode.findMany({
+        where: { tenantId, topologyId },
+        select: { id: true },
+      });
+      if (currentNodes.length > 0) {
+        const nodeIds = currentNodes.map(n => n.id);
+        await tx.visEdge.deleteMany({
+          where: {
+            tenantId,
+            OR: [
+              { sourceNodeId: { in: nodeIds } },
+              { targetNodeId: { in: nodeIds } },
+            ],
+          },
+        });
+      }
+
+      // 2. 删除当前拓扑下所有节点
+      await tx.visNode.deleteMany({
+        where: { tenantId, topologyId },
+      });
+
+      // 3. 恢复快照中的节点（不指定 ID，由数据库生成新 ID）
+      const nodeIdMap = new Map<string, string>();
+      if (snapshotData.nodes && Array.isArray(snapshotData.nodes)) {
+        for (const node of snapshotData.nodes) {
+          const newNode = await tx.visNode.create({
+            data: {
+              tenantId,
+              topologyId,
+              type: node.type,
+              name: node.name,
+              code: node.code ?? null,
+              positionX: node.positionX ?? 0,
+              positionY: node.positionY ?? 0,
+              config: (node.config ?? {}) as any,
+            },
+          });
+          // 记录旧 ID 到新 ID 的映射
+          nodeIdMap.set(node.id, newNode.id);
+        }
+      }
+
+      // 4. 恢复快照中的边（使用新的节点 ID）
+      if (snapshotData.edges && Array.isArray(snapshotData.edges)) {
+        for (const edge of snapshotData.edges) {
+          const newSourceId = nodeIdMap.get(edge.sourceNodeId);
+          const newTargetId = nodeIdMap.get(edge.targetNodeId);
+          if (newSourceId && newTargetId) {
+            await tx.visEdge.create({
+              data: {
+                tenantId,
+                sourceNodeId: newSourceId,
+                targetNodeId: newTargetId,
+                type: edge.type,
+                config: (edge.config ?? {}) as any,
+              },
+            });
+          }
+        }
+      }
+
+      return { restoredNodeCount: nodeIdMap.size };
+    });
+
+    // 记录审计日志
+    this.auditService.logAction(
+      tenantId,
+      'ROLLBACK',
+      'snapshot',
+      snapshotId,
+      undefined,
+      { topologyId, version: snapshot.version, restoredNodeCount: result.restoredNodeCount },
+    );
+
+    // 回滚后清除相关权限缓存
+    this.cacheService.clearPattern('perm:*');
+
+    return {
+      message: '回滚成功',
+      snapshotId,
+      version: snapshot.version,
+      ...result,
     };
   }
 }
